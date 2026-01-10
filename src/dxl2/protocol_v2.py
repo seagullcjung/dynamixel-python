@@ -335,6 +335,47 @@ def stream_response(ser, tx, *, count=None):
             yield Response.from_rx(rx)
 
 
+def parse_ping(r):
+    return replace(
+        r,
+        data={
+            r.dxl_id: {
+                "model_number": merge_bytes(r.data[:2]),
+                "firmware_version": r.data[2],
+            }
+        },
+    )
+
+
+def parse_bytes(r):
+    return replace(r, data=merge_bytes(r.data))
+
+
+def parse_nested(r, lengths):
+    packet = r.data[: lengths[0] + 1]
+
+    data = []
+    data.append(merge_bytes(packet[1:]))
+
+    start = lengths[0] + 1
+    for length in lengths[1:]:
+        packet = r.data[start : start + length + 4]
+
+        error = packet[2]
+        if error & 0x80:
+            packet_id = packet[3]
+            raise HardwareError(packet_id)
+
+        start += length + 4
+
+        if (error & 0x07) != 0:
+            return Response(timeout=False, corrupted=False, error=error, data=data)
+
+        data.append(merge_bytes(packet[4:]))
+
+    return replace(r, data=data)
+
+
 class DynamixelSerialV2:
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         self.serial = serial.Serial(timeout=timeout, write_timeout=0)
@@ -350,47 +391,12 @@ class DynamixelSerialV2:
     def disconnect(self):
         self.serial.close()
 
-    def parse_ping(self, r):
-        return {
-            r.dxl_id: {
-                "model_number": merge_bytes(r.data[:2]),
-                "firmware_version": r.data[2],
-            }
-        }
-
-    def parse_bytes(self, r):
-        return replace(r, data=merge_bytes(r.data))
-
-    def parse_nested(self, r, lengths):
-        packet = r.data[: lengths[0] + 1]
-
-        data = []
-        data.append(merge_bytes(packet[1:]))
-
-        start = lengths[0] + 1
-        for length in lengths[1:]:
-            packet = r.data[start : start + length + 4]
-
-            error = packet[2]
-            if error & 0x80:
-                packet_id = packet[3]
-                raise HardwareError(packet_id)
-
-            start += length + 4
-
-            if (error & 0x07) != 0:
-                return Response(timeout=False, corrupted=False, error=error, data=data)
-
-            data.append(merge_bytes(packet[4:]))
-
-        return replace(r, data=data)
-
     def ping(self, dxl_id):
         tx = InstructionPacketV2(dxl_id, PING)
         r = get_response(self.serial, tx)
 
         if r.ok:
-            r = replace(r, data=self.parse_ping(r))
+            r = parse_ping(r)
 
         return r
 
@@ -404,7 +410,7 @@ class DynamixelSerialV2:
                 r = replace(r, data=data)
                 break
 
-            data.update(self.parse_ping(r))
+            data.update(parse_ping(r).data)
 
         if r is None:
             return Response(timeout=True)
@@ -421,7 +427,7 @@ class DynamixelSerialV2:
         r = get_response(self.serial, tx)
 
         if r.ok:
-            r = self.parse_bytes(r)
+            r = parse_bytes(r)
 
         return r
 
@@ -478,7 +484,7 @@ class DynamixelSerialV2:
         r = None
         for r in stream_response(self.serial, tx, count=len(dxl_ids)):
             if r.ok:
-                data.append(self.parse_bytes(r).data)
+                data.append(parse_bytes(r).data)
 
         if r is None:
             return Response(timeout=True, corrupted=False)
@@ -523,7 +529,7 @@ class DynamixelSerialV2:
         r = get_response(self.serial, tx)
 
         if r.ok:
-            r = self.parse_nested(r, [length] * len(dxl_ids))
+            r = parse_nested(r, [length] * len(dxl_ids))
 
         return r
 
@@ -562,6 +568,6 @@ class DynamixelSerialV2:
         r = get_response(self.serial, tx)
 
         if r.ok:
-            r = self.parse_nested(r, lengths)
+            r = parse_nested(r, lengths)
 
         return r

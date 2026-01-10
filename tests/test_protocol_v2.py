@@ -169,7 +169,7 @@ def test_v2_receive_rest_timeout(mock_serial):
     assert stub.calls == 1
 
 
-def test_v2_rx_read_from_no_header(mock_serial):
+def test_v2_rx_receive_no_header(mock_serial):
     rx = [0x00] * 16
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
