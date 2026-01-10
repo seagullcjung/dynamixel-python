@@ -280,7 +280,7 @@ class StatusPacketV2:
 
         error = rest[1]
 
-        if error & 0x80 == 128:
+        if error & 0x80:
             raise HardwareError(packet_id)
 
         packet.extend(rest)
