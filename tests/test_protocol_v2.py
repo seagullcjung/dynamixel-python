@@ -64,13 +64,13 @@ def build_rx(packet_id=ID, error=ERROR, params=PARAMS):
 
 
 def test_v2_tx_write_to(mock_serial):
-    tx = build_tx()
+    tx = build_tx(params=[0xFF, 0xFF, 0xFD, 0xFD])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
 
-    tx = InstructionPacketV2(ID, INST, PARAMS)
+    tx = InstructionPacketV2(ID, INST, [0xFF, 0xFF, 0xFD])
     ok = tx.write_to(serial)
     assert ok
 

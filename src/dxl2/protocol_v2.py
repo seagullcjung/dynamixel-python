@@ -125,7 +125,7 @@ class InstructionPacketV2:
         params = packet.params
         indices = [
             i + 3
-            for i in range(len(params) - 3)
+            for i in range(len(params) - 2)
             if params[i : i + 3] == [0xFF, 0xFF, 0xFD]
         ]
 
