@@ -136,44 +136,6 @@ class InstructionPacketV2:
         packet = replace(packet, params=params)
         return packet
 
-    @classmethod
-    def write(cls, dxl_id, instruction, address, length, value):
-        return cls(
-            dxl_id,
-            instruction,
-            [*split_bytes(address), *split_bytes(value, n_bytes=length)],
-        )
-
-    @classmethod
-    def sync_read(cls, dxl_ids, instruction, address, length):
-        tx = cls.read(BROADCAST_ID, instruction, address, length)
-        params = tx.params
-        for dxl_id in dxl_ids:
-            params.append(dxl_id)
-
-        return replace(tx, params=params)
-
-    @classmethod
-    def bulk_read(cls, dxl_ids, instruction, addresses, lengths):
-        params = []
-        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
-            params.append(dxl_id)
-            params.extend(split_bytes(address))
-            params.extend(split_bytes(length))
-
-        return cls(BROADCAST_ID, instruction, params)
-
-    @classmethod
-    def bulk_write(cls, dxl_ids, addresses, lengths, values):
-        params = []
-        for dxl_id, address, length, value in zip(dxl_ids, addresses, lengths, values):
-            params.append(dxl_id)
-            params.extend(split_bytes(address))
-            params.extend(split_bytes(length))
-            params.extend(split_bytes(value, n_bytes=length))
-
-        return cls(BROADCAST_ID, BULK_WRITE, params)
-
 
 class HardwareError(Exception):
     """Hardware error."""
