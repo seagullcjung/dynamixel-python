@@ -4,6 +4,7 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
+import logging
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Optional
@@ -21,6 +22,19 @@ FACTORY_RESET = 0x06
 REBOOT = 0x08
 SYNC_WRITE = 0x83
 BULK_READ = 0x92
+
+
+error_msgs = [
+    "The applied voltage is out of the range of operating voltage set in the Control table.",
+    "Goal Position is written out of the range from CW Angle Limit to CCW Angle Limit.",
+    "Internal temperature of DYNAMIXEL is out of the range of operating temperature set in the Control table.",
+    "An instruction is out of the range for use.",
+    "Checksum of the transmitted Instruction Packet is incorrect.",
+    "The current load cannot be controlled by the set Torque.",
+    "An undefined instruction or delivering the action instruction without the Reg Write instruction.",
+]
+
+logger = logging.getLogger(__name__)
 
 
 def calc_checksum(packet):
@@ -137,6 +151,18 @@ class StatusPacketV1:
         packet.extend(rest)
 
         error = packet[4]
+        if error:
+            msg = [f"Error on dxl_id {packet_id}:"]
+
+            mask = 0x02
+            for error_msg in error_msgs:
+                if error & mask:
+                    msg.append(error_msg)
+
+                mask <<= 1
+
+            logger.error(" ".join(msg))
+
         params = packet[5:-1]
 
         checksum = packet[-1]

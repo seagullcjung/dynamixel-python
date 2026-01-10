@@ -5,6 +5,7 @@
 # See the LICENSE file in the project root for full license text.
 
 import copy
+import logging
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Optional, Tuple
@@ -28,6 +29,22 @@ FAST_SYNC_READ = 0x8A
 BULK_READ = 0x92
 BULK_WRITE = 0x93
 FAST_BULK_READ = 0x9A
+
+error_msgs = [
+    "Failed to process the sent Instruction Packet.",
+    "An undefined Instruction has been used or Action has been used without Reg Write.",
+    "The CRC of the sent Packet does not match the expected value.",
+    "Data to be written to the specified Address is outside the range of the minimum/maximum value.",
+    "Attempted to write Data that is shorter than the required data length of the specified Address.",
+    "Data to be written to the specified Address is outside of the configured Limit value.",
+    (
+        "Attempted to write a value to an Address that is Read Only or has not been defined, "
+        "attempted to read a value from an Address that is Write Only or has not been defined, or "
+        "attempted to write a value to an EEPROM register while Torque was Enabled."
+    ),
+]
+
+logger = logging.getLogger(__name__)
 
 
 def split_bytes(data, *, n_bytes=2):
@@ -282,6 +299,10 @@ class StatusPacketV2:
 
         if error & 0x80 == 128:
             raise HardwareError(packet_id)
+
+        error_number = error & 0x07
+        if error_number:
+            logger.error(f"Error on dxl_id {packet_id}: {error_msgs[error_number - 1]}")
 
         packet.extend(rest)
 
