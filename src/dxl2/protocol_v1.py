@@ -116,13 +116,13 @@ class StatusPacketV1:
                 packet.pop(0)
 
             if ser.timeout is not None and time.time() - t0 >= ser.timeout:
-                return None
+                break
 
         if not header_found:
             return None
 
         if len(packet) < 4:
-            packet.extend(ser.read(5 - len(packet)))
+            packet.extend(ser.read(4 - len(packet)))
 
         if len(packet) < 4:
             return None

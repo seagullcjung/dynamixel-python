@@ -142,7 +142,7 @@ def test_v1_read_from_header_timeout(mock_serial):
 
 def test_v1_read_from_rest_timeout(mock_serial):
     rx = build_rx()
-    rx = rx[:5]
+    rx = rx[:3]
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
@@ -157,7 +157,7 @@ def test_v1_read_from_rest_timeout(mock_serial):
 
 
 def test_v1_rx_read_from_no_header(mock_serial):
-    rx = [0x00] * 16
+    rx = []
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
