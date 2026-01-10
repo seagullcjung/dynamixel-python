@@ -297,7 +297,7 @@ class StatusPacketV2:
 
         error = rest[1]
 
-        if error & 0x80 == 128:
+        if error & 0x80:
             raise HardwareError(packet_id)
 
         error_number = error & 0x07
@@ -363,10 +363,15 @@ class Status:
         start = lengths[0] + 1
         for length in lengths[1:]:
             packet = rx.params[start : start + length + 4]
-            start += length + 4
 
             error = packet[2]
-            if (error & 0x3F) != 0:
+            if error & 0x80:
+                packet_id = packet[3]
+                raise HardwareError(packet_id)
+
+            start += length + 4
+
+            if (error & 0x07) != 0:
                 return status
 
             data.append(merge_bytes(packet[4:]))
