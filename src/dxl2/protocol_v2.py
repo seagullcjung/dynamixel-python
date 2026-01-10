@@ -495,9 +495,7 @@ class DynamixelSerialV2:
         params = []
         params.extend(split_bytes(address))
         params.extend(split_bytes(length))
-
-        for dxl_id in dxl_ids:
-            params.append(dxl_id)
+        params.extend(dxl_ids)
 
         tx = InstructionPacketV2(BROADCAST_ID, SYNC_READ, params)
 
@@ -520,9 +518,7 @@ class DynamixelSerialV2:
         params = []
         params.extend(split_bytes(address))
         params.extend(split_bytes(length))
-
-        for dxl_id in dxl_ids:
-            params.append(dxl_id)
+        params.extend(dxl_ids)
 
         tx = InstructionPacketV2(BROADCAST_ID, FAST_SYNC_READ, params)
 

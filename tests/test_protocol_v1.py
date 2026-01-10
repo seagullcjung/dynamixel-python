@@ -4,7 +4,6 @@ from serial import Serial
 from dxl2.protocol_v1 import (
     DynamixelSerialV1,
     InstructionPacketV1,
-    StatusPacketV1,
     calc_checksum,
     receive,
     transmit,
