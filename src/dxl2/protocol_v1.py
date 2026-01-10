@@ -172,9 +172,6 @@ class DynamixelSerialV1:
         self.serial.baudrate = baudrate
 
     def connect(self):
-        if self.serial.is_open:
-            return
-
         self.serial.open()
 
     def disconnect(self):
