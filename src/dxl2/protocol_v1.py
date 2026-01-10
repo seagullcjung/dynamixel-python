@@ -4,7 +4,6 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
-import logging
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Optional
@@ -22,19 +21,6 @@ FACTORY_RESET = 0x06
 REBOOT = 0x08
 SYNC_WRITE = 0x83
 BULK_READ = 0x92
-
-
-error_msgs = [
-    "The applied voltage is out of the range of operating voltage set in the Control table.",
-    "Goal Position is written out of the range from CW Angle Limit to CCW Angle Limit.",
-    "Internal temperature of DYNAMIXEL is out of the range of operating temperature set in the Control table.",
-    "An instruction is out of the range for use.",
-    "Checksum of the transmitted Instruction Packet is incorrect.",
-    "The current load cannot be controlled by the set Torque.",
-    "An undefined instruction or delivering the action instruction without the Reg Write instruction.",
-]
-
-logger = logging.getLogger(__name__)
 
 
 def calc_checksum(packet):
@@ -60,7 +46,8 @@ class InstructionPacketV1:
     length: int = field(init=False)
     checksum: int = field(init=False)
 
-    def as_tuple(self):
+    @property
+    def packet(self):
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -68,7 +55,7 @@ class InstructionPacketV1:
         packet.append(self.instruction)
         packet.extend(self.params)
         packet.append(self.checksum)
-        return tuple(packet)
+        return bytes(packet)
 
     def __post_init__(self):
         object.__setattr__(self, "length", len(self.params) + 2)
@@ -82,13 +69,6 @@ class InstructionPacketV1:
 
         object.__setattr__(self, "checksum", calc_checksum(packet))
 
-    def write_to(self, ser):
-        to_write = bytes(self.as_tuple())
-
-        written_bytes = ser.write(to_write)
-
-        return written_bytes == len(to_write)
-
 
 @dataclass(frozen=True)
 class StatusPacketV1:
@@ -100,7 +80,8 @@ class StatusPacketV1:
 
     header: List[int] = field(default_factory=lambda: [0xFF, 0xFF], init=False)
 
-    def as_tuple(self):
+    @property
+    def packet(self):
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -110,85 +91,142 @@ class StatusPacketV1:
         packet.append(self.checksum)
         return tuple(packet)
 
-    def is_valid(self):
-        return calc_checksum(self.as_tuple()[:-1]) == self.checksum
+    @property
+    def valid(self):
+        return calc_checksum(list(self.packet)[:-1]) == self.checksum
 
-    @classmethod
-    def read_from(cls, ser):
-        packet = []
-        header_found = False
-        t0 = time.time()
-        while not header_found:
-            # Header1 Header2 Packet ID Length
-            packet.extend(list(ser.read(4 - len(packet))))
 
-            for _ in range(len(packet)):
-                if packet[:2] == [0xFF, 0xFF]:
-                    header_found = True
-                    break
+def transmit(ser, tx):
+    buffer = tx.packet
+    count = ser.write(buffer)
 
-                packet.pop(0)
+    if count < len(buffer):
+        raise ConnectionError
 
-            if ser.timeout is not None and time.time() - t0 >= ser.timeout:
+
+def find_header(ser):
+    packet = []
+    header_found = False
+    t0 = time.time()
+    while not header_found:
+        packet.extend(list(ser.read(2 - len(packet))))
+
+        for _ in range(len(packet)):
+            if packet[:2] == [0xFF, 0xFF]:
+                header_found = True
                 break
 
-        if not header_found:
-            return None
+            packet.pop(0)
 
-        if len(packet) < 4:
-            packet.extend(ser.read(4 - len(packet)))
+        if ser.timeout is not None and time.time() - t0 >= ser.timeout:
+            break
 
-        if len(packet) < 4:
-            return None
+    return header_found
 
-        packet_id = packet[2]
-        length = packet[3]
 
-        rest = list(ser.read(length))
-        if len(rest) < length:
-            return None
+def receive(ser):
+    found = find_header(ser)
 
-        packet.extend(rest)
+    if not found:
+        return None
 
-        error = packet[4]
-        if error:
-            msg = [f"Error on dxl_id {packet_id}:"]
+    buffer = list(ser.read(2))
 
-            mask = 0x02
-            for error_msg in error_msgs:
-                if error & mask:
-                    msg.append(error_msg)
+    if len(buffer) < 2:
+        return None
 
-                mask <<= 1
+    packet_id, length = buffer
 
-            logger.error(" ".join(msg))
+    rest = list(ser.read(length))
 
-        params = packet[5:-1]
+    if len(rest) < length:
+        return None
 
-        checksum = packet[-1]
+    error = rest.pop(0)
+    params = rest[:-1]
+    checksum = rest[-1]
 
-        rx = cls(packet_id, length, error, params, checksum)
+    rx = StatusPacketV1(packet_id, length, error, params, checksum)
 
-        return rx
+    return rx
 
 
 @dataclass(frozen=True)
-class Status:
-    packet: StatusPacketV1
-    error_number: int = field(init=False)
-    valid: bool = field(init=False)
+class Response:
+    timeout: Optional[bool] = None
+    corrupted: Optional[bool] = None
+
+    error: Optional[int] = None
+    dxl_id: Optional[int] = None
     data: Optional[Any] = None
 
-    def __post_init__(self):
-        object.__setattr__(self, "error_number", self.packet.error)
-        object.__setattr__(self, "valid", self.packet.is_valid())
-
-    def is_ok(self):
-        return self.valid and self.error_number == 0
-
     @classmethod
-    def parse_bytes(cls, rx: StatusPacketV1):
-        return cls(rx, merge_bytes(rx.params))
+    def from_rx(cls, rx):
+        return cls(
+            timeout=False,
+            corrupted=not rx.valid,
+            error=rx.error,
+            dxl_id=rx.packet_id,
+            data=rx.params,
+        )
+
+    @property
+    def ok(self):
+        ok = not self.timeout and not self.corrupted
+        if self.error is None:
+            return ok
+
+        return ok and self.error == 0
+
+
+def get_response(ser, tx):
+    transmit(ser, tx)
+
+    rx = receive(ser)
+    if rx is None:
+        r = Response(timeout=True, corrupted=False)
+
+    elif not rx.valid:
+        r = Response(timeout=False, corrupted=True)
+
+    else:
+        r = Response.from_rx(rx)
+
+    return r
+
+
+def stream_response(ser, tx, *, count=None):
+    transmit(ser, tx)
+
+    if count is None:
+        while True:
+            rx = receive(ser)
+
+            if rx is None:
+                yield Response(timeout=True, corrupted=False)
+                break
+
+            yield Response.from_rx(rx)
+
+            if not rx.valid:
+                break
+    else:
+        for _ in range(count):
+            rx = receive(ser)
+
+            if rx is None:
+                yield Response(timeout=True, corrupted=False)
+                break
+
+            if not rx.valid:
+                yield Response(timeout=False, corrupted=True)
+                break
+
+            yield Response.from_rx(rx)
+
+
+def parse_bytes(r):
+    return replace(r, data=merge_bytes(r.data))
 
 
 class DynamixelSerialV1:
@@ -208,37 +246,16 @@ class DynamixelSerialV1:
 
     def ping(self, dxl_id):
         tx = InstructionPacketV1(dxl_id, PING)
-        ok = tx.write_to(self.serial)
-
-        if not ok:
-            return False
-
-        rx = StatusPacketV1.read_from(self.serial)
-
-        if rx is None:
-            return False
-
-        status = Status(rx)
-        return status.is_ok()
+        return get_response(self.serial, tx)
 
     def read(self, dxl_id, address, length):
         tx = InstructionPacketV1(dxl_id, READ, [address, length])
-        ok = tx.write_to(self.serial)
+        r = get_response(self.serial, tx)
 
-        if not ok:
-            return None
+        if r.ok:
+            r = parse_bytes(r)
 
-        rx = StatusPacketV1.read_from(self.serial)
-
-        if rx is None:
-            return None
-
-        status = Status.parse_bytes(rx)
-
-        if not status.is_ok():
-            return None
-
-        return status.data
+        return r
 
     def _write(self, dxl_id, instruction, address, length, value):
         tx = InstructionPacketV1(
@@ -246,18 +263,8 @@ class DynamixelSerialV1:
             instruction,
             [address, *split_bytes(value, n_bytes=length)],
         )
-        ok = tx.write_to(self.serial)
 
-        if not ok:
-            return False
-
-        rx = StatusPacketV1.read_from(self.serial)
-
-        if rx is None:
-            return False
-
-        status = Status(rx)
-        return status.is_ok()
+        return get_response(self.serial, tx)
 
     def write(self, dxl_id, address, length, value):
         return self._write(dxl_id, WRITE, address, length, value)
@@ -270,24 +277,13 @@ class DynamixelSerialV1:
             params = []
 
         tx = InstructionPacketV1(dxl_id, instruction, params)
-        ok = tx.write_to(self.serial)
 
-        if not ok:
-            return False
-
-        rx = StatusPacketV1.read_from(self.serial)
-
-        if rx is None:
-            return False
-
-        status = Status(rx)
-        return status.is_ok()
+        return get_response(self.serial, tx)
 
     def action(self):
         tx = InstructionPacketV1(BROADCAST_ID, ACTION)
-        ok = tx.write_to(self.serial)
 
-        return ok
+        transmit(self.serial, tx)
 
     def factory_reset(self, dxl_id):
         assert dxl_id < 0xFE
@@ -297,17 +293,14 @@ class DynamixelSerialV1:
         return self._send(dxl_id, REBOOT)
 
     def sync_write(self, dxl_ids, address, length, values):
-        tx = InstructionPacketV1(BROADCAST_ID, SYNC_WRITE, [address, length])
-
-        params = tx.params
+        params = [address, length]
         for dxl_id, value in zip(dxl_ids, values):
             params.append(dxl_id)
             params.extend(split_bytes(value, n_bytes=length))
 
-        tx = replace(tx, params=params)
-        ok = tx.write_to(self.serial)
+        tx = InstructionPacketV1(BROADCAST_ID, SYNC_WRITE, params)
 
-        return ok
+        transmit(self.serial, tx)
 
     def bulk_read(self, dxl_ids, addresses, lengths):
         params = [0x00]
@@ -317,23 +310,14 @@ class DynamixelSerialV1:
             params.append(address)
 
         tx = InstructionPacketV1(BROADCAST_ID, BULK_READ, params)
-        ok = tx.write_to(self.serial)
-
-        if not ok:
-            return None
 
         data = []
-        for _ in dxl_ids:
-            rx = StatusPacketV1.read_from(self.serial)
+        r = None
+        for r in stream_response(self.serial, tx, count=len(dxl_ids)):
+            if r.ok:
+                data.append(parse_bytes(r).data)
 
-            if rx is None:
-                return None
+        if r is None:
+            return Response(timeout=True, corrupted=False)
 
-            status = Status.parse_bytes(rx)
-
-            if not status.is_ok():
-                return None
-
-            data.append(status.data)
-
-        return data
+        return replace(r, data=data)

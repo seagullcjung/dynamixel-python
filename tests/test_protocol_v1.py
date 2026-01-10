@@ -4,8 +4,9 @@ from serial import Serial
 from dxl2.protocol_v1 import (
     DynamixelSerialV1,
     InstructionPacketV1,
-    StatusPacketV1,
     calc_checksum,
+    receive,
+    transmit,
 )
 
 TIMEOUT = 0.01
@@ -55,7 +56,7 @@ def build_rx(packet_id=ID, error=ERROR, params=PARAMS):
     return packet
 
 
-def test_tx_v1_write_to(mock_serial):
+def test_v1_transmit(mock_serial):
     tx = build_tx()
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
@@ -63,8 +64,7 @@ def test_tx_v1_write_to(mock_serial):
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
 
     tx = InstructionPacketV1(ID, INST, PARAMS)
-    ok = tx.write_to(serial)
-    assert ok
+    transmit(serial, tx)
 
     assert serial.read() == b"x"
 
@@ -72,28 +72,29 @@ def test_tx_v1_write_to(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_tx_write_to_timeout(mocker, mock_serial):
+def test_v1_transmit_raises(mocker, mock_serial):
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
 
     mocker.patch.object(serial, "write", return_value=1)
 
     tx = InstructionPacketV1(0, 0)
-    ok = tx.write_to(serial)
-    assert not ok
+
+    with pytest.raises(ConnectionError):
+        transmit(serial, tx)
 
 
-def test_v1_rx_read_from(mock_serial):
+def test_v1_receive(mock_serial):
     rx = build_rx(error=0x01, params=[0xFF, 0xFF, 0xFD, 0xFD])
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is not None
 
-    assert rx.is_valid()
+    assert rx.valid
 
     assert rx.error == 0x01
 
@@ -103,7 +104,7 @@ def test_v1_rx_read_from(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_rx_read_from_residue(mock_serial):
+def test_v1_rx_receive_with_residue(mock_serial):
     rx = build_rx(params=[0xFF, 0xFF, 0xFD, 0xFD])
     rx = [0x00] * 16 + rx
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
@@ -111,11 +112,11 @@ def test_v1_rx_read_from_residue(mock_serial):
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is not None
 
-    assert rx.is_valid()
+    assert rx.valid
 
     assert rx.error == ERROR
 
@@ -125,14 +126,14 @@ def test_v1_rx_read_from_residue(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_read_from_header_timeout(mock_serial):
+def test_v1_receive_header_timeout(mock_serial):
     rx = []
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is None
 
@@ -140,7 +141,7 @@ def test_v1_read_from_header_timeout(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_read_from_rest_timeout(mock_serial):
+def test_v1_receive_rest_timeout(mock_serial):
     rx = build_rx()
     rx = rx[:3]
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
@@ -148,7 +149,7 @@ def test_v1_read_from_rest_timeout(mock_serial):
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is None
 
@@ -156,14 +157,14 @@ def test_v1_read_from_rest_timeout(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_rx_read_from_no_header(mock_serial):
+def test_v1_receive_no_header(mock_serial):
     rx = []
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is None
 
@@ -171,7 +172,7 @@ def test_v1_rx_read_from_no_header(mock_serial):
     assert stub.calls == 1
 
 
-def test_v1_rx_read_from_timeout(mock_serial):
+def test_v1_receive_timeout(mock_serial):
     rx = build_rx()
     rx[3] = 0xFF
 
@@ -180,7 +181,7 @@ def test_v1_rx_read_from_timeout(mock_serial):
     serial = Serial(mock_serial.port, timeout=TIMEOUT)
     serial.write(b"x")
 
-    rx = StatusPacketV1.read_from(serial)
+    rx = receive(serial)
 
     assert rx is None
 
@@ -203,8 +204,8 @@ def test_v1_ping(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    ok = port.ping(ID)
-    assert ok
+    r = port.ping(ID)
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1
@@ -216,9 +217,10 @@ def test_v1_read(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    data = port.read(ID, 0x2B, 4)
+    r = port.read(ID, 0x2B, 4)
 
-    assert data == 0x20010203
+    assert r.ok
+    assert r.data == 0x20010203
 
     assert stub.called
     assert stub.calls == 1
@@ -230,9 +232,9 @@ def test_v1_write(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    ok = port.write(ID, 0x08, 2, 0x200)
+    r = port.write(ID, 0x08, 2, 0x200)
 
-    assert ok
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1
@@ -244,9 +246,9 @@ def test_v1_reg_write(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    ok = port.reg_write(ID, 0x1E, 2, 0x01F4)
+    r = port.reg_write(ID, 0x1E, 2, 0x01F4)
 
-    assert ok
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1
@@ -257,9 +259,7 @@ def test_v1_action(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
-    ok = port.action()
-
-    assert ok
+    port.action()
 
     assert port.serial.read() == b"x"
 
@@ -273,9 +273,9 @@ def test_v1_factory_reset(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    ok = port.factory_reset(ID)
+    r = port.factory_reset(ID)
 
-    assert ok
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1
@@ -287,9 +287,9 @@ def test_v1_reboot(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    ok = port.reboot(ID)
+    r = port.reboot(ID)
 
-    assert ok
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1
@@ -304,8 +304,7 @@ def test_v1_sync_write(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
-    ok = port.sync_write([ID, ID + 1], 0x1E, 4, [0x01500010, 0x03600220])
-    assert ok
+    port.sync_write([ID, ID + 1], 0x1E, 4, [0x01500010, 0x03600220])
 
     assert port.serial.read() == b"x"
 
@@ -322,9 +321,10 @@ def test_v1_bulk_read(mock_serial, port):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2))
 
-    data = port.bulk_read([ID, ID + 1], [0x1E, 0x24], [2, 4])
+    r = port.bulk_read([ID, ID + 1], [0x1E, 0x24], [2, 4])
 
-    assert data == [0x0182, 0x01020372]
+    assert r.ok
+    assert r.data == [0x0182, 0x01020372]
 
     assert stub.called
     assert stub.calls == 1

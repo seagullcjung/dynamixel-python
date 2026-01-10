@@ -5,7 +5,6 @@
 # See the LICENSE file in the project root for full license text.
 
 import copy
-import logging
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Optional, Tuple
@@ -29,22 +28,6 @@ FAST_SYNC_READ = 0x8A
 BULK_READ = 0x92
 BULK_WRITE = 0x93
 FAST_BULK_READ = 0x9A
-
-error_msgs = [
-    "Failed to process the sent Instruction Packet.",
-    "An undefined Instruction has been used or Action has been used without Reg Write.",
-    "The CRC of the sent Packet does not match the expected value.",
-    "Data to be written to the specified Address is outside the range of the minimum/maximum value.",
-    "Attempted to write Data that is shorter than the required data length of the specified Address.",
-    "Data to be written to the specified Address is outside of the configured Limit value.",
-    (
-        "Attempted to write a value to an Address that is Read Only or has not been defined, "
-        "attempted to read a value from an Address that is Write Only or has not been defined, or "
-        "attempted to write a value to an EEPROM register while Torque was Enabled."
-    ),
-]
-
-logger = logging.getLogger(__name__)
 
 
 def split_bytes(data, *, n_bytes=2):
@@ -114,7 +97,8 @@ class InstructionPacketV2:
     length: int = field(init=False)
     crc: int = field(init=False)
 
-    def as_tuple(self):
+    @property
+    def packet(self):
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -122,7 +106,7 @@ class InstructionPacketV2:
         packet.append(self.instruction)
         packet.extend(self.params)
         packet.extend(split_bytes(self.crc))
-        return tuple(packet)
+        return bytes(packet)
 
     def __post_init__(self):
         object.__setattr__(self, "length", len(self.params) + 3)
@@ -152,56 +136,6 @@ class InstructionPacketV2:
         packet = replace(packet, params=params)
         return packet
 
-    @classmethod
-    def read(cls, dxl_id, instruction, address, length):
-        return cls(dxl_id, instruction, [*split_bytes(address), *split_bytes(length)])
-
-    @classmethod
-    def write(cls, dxl_id, instruction, address, length, value):
-        return cls(
-            dxl_id,
-            instruction,
-            [*split_bytes(address), *split_bytes(value, n_bytes=length)],
-        )
-
-    @classmethod
-    def sync_read(cls, dxl_ids, instruction, address, length):
-        tx = cls.read(BROADCAST_ID, instruction, address, length)
-        params = tx.params
-        for dxl_id in dxl_ids:
-            params.append(dxl_id)
-
-        return replace(tx, params=params)
-
-    @classmethod
-    def bulk_read(cls, dxl_ids, instruction, addresses, lengths):
-        params = []
-        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
-            params.append(dxl_id)
-            params.extend(split_bytes(address))
-            params.extend(split_bytes(length))
-
-        return cls(BROADCAST_ID, instruction, params)
-
-    @classmethod
-    def bulk_write(cls, dxl_ids, addresses, lengths, values):
-        params = []
-        for dxl_id, address, length, value in zip(dxl_ids, addresses, lengths, values):
-            params.append(dxl_id)
-            params.extend(split_bytes(address))
-            params.extend(split_bytes(length))
-            params.extend(split_bytes(value, n_bytes=length))
-
-        return cls(BROADCAST_ID, BULK_WRITE, params)
-
-    def write_to(self, ser):
-        tx = self.add_stuffing()
-        to_write = bytes(tx.as_tuple())
-
-        written_bytes = ser.write(to_write)
-
-        return written_bytes == len(to_write)
-
 
 class HardwareError(Exception):
     """Hardware error."""
@@ -228,7 +162,8 @@ class StatusPacketV2:
         init=False,
     )
 
-    def as_tuple(self):
+    @property
+    def packet(self):
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -237,15 +172,16 @@ class StatusPacketV2:
         packet.append(self.error)
         packet.extend(self.params)
         packet.extend(split_bytes(self.crc))
-        return tuple(packet)
+        return bytes(packet)
 
-    def is_valid(self):
-        return calc_crc_16(self.as_tuple()[:-2]) == self.crc
+    @property
+    def valid(self):
+        return calc_crc_16(list(self.packet)[:-2]) == self.crc
 
     def remove_stuffing(self):
-        packet = copy.deepcopy(self)
+        rx = copy.deepcopy(self)
 
-        params = packet.params
+        params = rx.params
 
         indices = [
             i + 3
@@ -256,130 +192,188 @@ class StatusPacketV2:
         for i in reversed(indices):
             params.pop(i)
 
-        packet = replace(packet, params=params)
-        packet = replace(packet, crc=calc_crc_16(packet.as_tuple()[:-2]))
-        return packet
-
-    @classmethod
-    def read_from(cls, ser):
-        packet = []
-        header_found = False
-        t0 = time.time()
-        while not header_found:
-            # Header1 Header2 Header3 Reserved Packet ID Length 1 Length 2
-            packet.extend(list(ser.read(7 - len(packet))))
-
-            for _ in range(len(packet)):
-                if packet[:4] == [0xFF, 0xFF, 0xFD, 0x00]:
-                    header_found = True
-                    break
-
-                packet.pop(0)
-
-            if ser.timeout is not None and time.time() - t0 >= ser.timeout:
-                break
-
-        if not header_found:
-            return None
-
-        if len(packet) < 7:
-            packet.extend(ser.read(7 - len(packet)))
-
-        if len(packet) < 7:
-            return None
-
-        packet_id = packet[4]
-        length = merge_bytes(packet[5:7])
-
-        rest = list(ser.read(length))
-        if len(rest) < length:
-            return None
-
-        error = rest[1]
-
-        if error & 0x80:
-            raise HardwareError(packet_id)
-
-        error_number = error & 0x07
-        if error_number:
-            logger.error(f"Error on dxl_id {packet_id}: {error_msgs[error_number - 1]}")
-
-        packet.extend(rest)
-
-        instruction = packet[7]
-        params = packet[9:-2]
-
-        crc = merge_bytes(packet[-2:])
-
-        rx = cls(packet_id, length, instruction, error, params, crc)
-
-        if rx.is_valid():
-            rx = rx.remove_stuffing()
-
+        rx = replace(rx, params=params)
+        rx = replace(rx, crc=calc_crc_16(rx.packet[:-2]))
         return rx
 
 
+def transmit(ser, tx):
+    tx = tx.add_stuffing()
+    buffer = tx.packet
+    count = ser.write(buffer)
+
+    if count < len(buffer):
+        raise ConnectionError
+
+
+def find_header(ser):
+    packet = []
+    header_found = False
+    t0 = time.time()
+    while not header_found:
+        packet.extend(list(ser.read(4 - len(packet))))
+
+        for _ in range(len(packet)):
+            if packet[:4] == [0xFF, 0xFF, 0xFD, 0x00]:
+                header_found = True
+                break
+
+            packet.pop(0)
+
+        if ser.timeout is not None and time.time() - t0 >= ser.timeout:
+            break
+
+    return header_found
+
+
+def receive(ser):
+    found = find_header(ser)
+
+    if not found:
+        return None
+
+    buffer = list(ser.read(3))
+
+    if len(buffer) < 3:
+        return None
+
+    packet_id, length_l, length_h = buffer
+    length = merge_bytes([length_l, length_h])
+
+    rest = list(ser.read(length))
+
+    if len(rest) < length:
+        return None
+
+    instruction = rest.pop(0)
+    error = rest.pop(0)
+    params = rest[:-2]
+    crc = merge_bytes(rest[-2:])
+
+    rx = StatusPacketV2(packet_id, length, instruction, error, params, crc)
+
+    if rx.valid:
+        rx = rx.remove_stuffing()
+
+    if rx.error & 0x80:
+        raise HardwareError(packet_id)
+
+    return rx
+
+
 @dataclass(frozen=True)
-class Status:
-    packet: StatusPacketV2
-    error_number: int = field(init=False)
-    valid: bool = field(init=False)
+class Response:
+    timeout: Optional[bool] = None
+    corrupted: Optional[bool] = None
+
+    error: Optional[int] = None
+    dxl_id: Optional[int] = None
     data: Optional[Any] = None
 
-    def __post_init__(self):
-        error = self.packet.error
-        object.__setattr__(self, "error_number", error & 0x3F)
-        object.__setattr__(self, "valid", self.packet.is_valid())
-
-    def is_ok(self):
-        return self.valid and self.error_number == 0
-
     @classmethod
-    def parse_ping(cls, rx: StatusPacketV2):
+    def from_rx(cls, rx):
         return cls(
-            rx,
-            {
-                "model_number": merge_bytes(rx.params[:2]),
-                "firmware_version": rx.params[2],
-            },
+            timeout=False,
+            corrupted=not rx.valid,
+            error=rx.error & 0x07,
+            dxl_id=rx.packet_id,
+            data=rx.params,
         )
 
-    @classmethod
-    def parse_bytes(cls, rx: StatusPacketV2):
-        return cls(rx, merge_bytes(rx.params))
+    @property
+    def ok(self):
+        ok = not self.timeout and not self.corrupted
+        if self.error is None:
+            return ok
 
-    @classmethod
-    def parse_nested(cls, rx: StatusPacketV2, lengths):
-        status = cls(rx)
+        return ok and self.error == 0
 
-        if not status.is_ok():
-            return status
 
-        packet = rx.params[: lengths[0] + 1]
+def get_response(ser, tx):
+    transmit(ser, tx)
 
-        data = []
-        data.append(merge_bytes(packet[1:]))
+    rx = receive(ser)
+    if rx is None:
+        r = Response(timeout=True, corrupted=False)
 
-        start = lengths[0] + 1
-        for length in lengths[1:]:
-            packet = rx.params[start : start + length + 4]
+    elif not rx.valid:
+        r = Response(timeout=False, corrupted=True)
 
-            error = packet[2]
-            if error & 0x80:
-                packet_id = packet[3]
-                raise HardwareError(packet_id)
+    else:
+        r = Response.from_rx(rx)
 
-            start += length + 4
+    return r
 
-            if (error & 0x07) != 0:
-                return status
 
-            data.append(merge_bytes(packet[4:]))
+def stream_response(ser, tx, *, count=None):
+    transmit(ser, tx)
 
-        if len(data) == 0:
-            return status
+    if count is None:
+        while True:
+            rx = receive(ser)
 
-        return replace(status, data=data)
+            if rx is None:
+                yield Response(timeout=True, corrupted=False)
+                break
+
+            yield Response.from_rx(rx)
+
+            if not rx.valid:
+                break
+    else:
+        for _ in range(count):
+            rx = receive(ser)
+
+            if rx is None:
+                yield Response(timeout=True, corrupted=False)
+                break
+
+            if not rx.valid:
+                yield Response(timeout=False, corrupted=True)
+                break
+
+            yield Response.from_rx(rx)
+
+
+def parse_ping(r):
+    return replace(
+        r,
+        data={
+            r.dxl_id: {
+                "model_number": merge_bytes(r.data[:2]),
+                "firmware_version": r.data[2],
+            }
+        },
+    )
+
+
+def parse_bytes(r):
+    return replace(r, data=merge_bytes(r.data))
+
+
+def parse_nested(r, lengths):
+    packet = r.data[: lengths[0] + 1]
+
+    data = []
+    data.append(merge_bytes(packet[1:]))
+
+    start = lengths[0] + 1
+    for length in lengths[1:]:
+        packet = r.data[start : start + length + 4]
+
+        error = packet[2]
+        if error & 0x80:
+            packet_id = packet[3]
+            raise HardwareError(packet_id)
+
+        start += length + 4
+
+        if (error & 0x07) != 0:
+            return Response(timeout=False, corrupted=False, error=error, data=data)
+
+        data.append(merge_bytes(packet[4:]))
+
+    return replace(r, data=data)
 
 
 class DynamixelSerialV2:
@@ -399,83 +393,51 @@ class DynamixelSerialV2:
 
     def ping(self, dxl_id):
         tx = InstructionPacketV2(dxl_id, PING)
-        ok = tx.write_to(self.serial)
+        r = get_response(self.serial, tx)
 
-        if not ok:
-            return None
+        if r.ok:
+            r = parse_ping(r)
 
-        rx = StatusPacketV2.read_from(self.serial)
-
-        if rx is None:
-            return None
-
-        status = Status.parse_ping(rx)
-
-        if not status.is_ok():
-            return None
-
-        return status.data
+        return r
 
     def broadcast_ping(self):
         tx = InstructionPacketV2(BROADCAST_ID, PING)
-        ok = tx.write_to(self.serial)
 
-        if not ok:
-            return None
-
+        r = None
         data = {}
-        rx = True
-        while rx is not None:
-            rx = StatusPacketV2.read_from(self.serial)
-
-            if rx is None:
+        for r in stream_response(self.serial, tx):
+            if not r.ok:
+                r = replace(r, data=data)
                 break
 
-            status = Status.parse_ping(rx)
+            data.update(parse_ping(r).data)
 
-            if not status.is_ok():
-                return None
+        if r is None:
+            return Response(timeout=True)
 
-            data[rx.packet_id] = status.data
-
-        if not data:
-            return None
-
-        return data
+        r = replace(r, timeout=False, data=data)
+        return r
 
     def read(self, dxl_id, address, length):
-        tx = InstructionPacketV2.read(dxl_id, READ, address, length)
-        ok = tx.write_to(self.serial)
+        params = []
+        params.extend(split_bytes(address))
+        params.extend(split_bytes(length))
 
-        if not ok:
-            return None
+        tx = InstructionPacketV2(dxl_id, READ, params)
+        r = get_response(self.serial, tx)
 
-        rx = StatusPacketV2.read_from(self.serial)
+        if r.ok:
+            r = parse_bytes(r)
 
-        if rx is None:
-            return None
-
-        status = Status.parse_bytes(rx)
-
-        if not status.is_ok():
-            return None
-
-        return status.data
+        return r
 
     def _write(self, dxl_id, instruction, address, length, value):
-        tx = InstructionPacketV2.write(dxl_id, instruction, address, length, value)
-        ok = tx.write_to(self.serial)
-
-        if not ok:
-            return False
-
-        rx = StatusPacketV2.read_from(self.serial)
-
-        if rx is None:
-            return False
-
-        status = Status(rx)
-        return status.is_ok()
+        tx = InstructionPacketV2(
+            dxl_id,
+            instruction,
+            [*split_bytes(address), *split_bytes(value, n_bytes=length)],
+        )
+        return get_response(self.serial, tx)
 
     def write(self, dxl_id, address, length, value):
         return self._write(dxl_id, WRITE, address, length, value)
@@ -488,21 +450,7 @@ class DynamixelSerialV2:
             params = []
 
         tx = InstructionPacketV2(dxl_id, instruction, params)
-        ok = tx.write_to(self.serial)
-
-        if not ok:
-            return False
-
-        if dxl_id == BROADCAST_ID:
-            return True
-
-        rx = StatusPacketV2.read_from(self.serial)
-
-        if rx is None:
-            return False
-
-        status = Status(rx)
-        return status.is_ok()
+        return get_response(self.serial, tx)
 
     def action(self, dxl_id):
         return self._send(dxl_id, ACTION)
@@ -531,108 +479,91 @@ class DynamixelSerialV2:
     def control_table_restore(self, dxl_id):
         return self._send(dxl_id, CONTROL_TABLE_BACKUP, [0x02, 0x43, 0x54, 0x52, 0x4C])
 
-    def sync_read(self, dxl_ids, address, length):
-        tx = InstructionPacketV2.sync_read(dxl_ids, SYNC_READ, address, length)
-        ok = tx.write_to(self.serial)
-
-        if not ok:
-            return None
-
+    def _sync_read(self, tx, dxl_ids):
         data = []
-        for _ in dxl_ids:
-            rx = StatusPacketV2.read_from(self.serial)
+        r = None
+        for r in stream_response(self.serial, tx, count=len(dxl_ids)):
+            if r.ok:
+                data.append(parse_bytes(r).data)
 
-            if rx is None:
-                return None
+        if r is None:
+            return Response(timeout=True, corrupted=False)
 
-            status = Status.parse_bytes(rx)
+        return replace(r, data=data)
 
-            if not status.is_ok():
-                return None
+    def sync_read(self, dxl_ids, address, length):
+        params = []
+        params.extend(split_bytes(address))
+        params.extend(split_bytes(length))
+        params.extend(dxl_ids)
 
-            data.append(status.data)
+        tx = InstructionPacketV2(BROADCAST_ID, SYNC_READ, params)
 
-        if len(data) == 0:
-            return None
-
-        return data
+        return self._sync_read(tx, dxl_ids)
 
     def sync_write(self, dxl_ids, address, length, values):
-        tx = InstructionPacketV2.read(BROADCAST_ID, SYNC_WRITE, address, length)
+        params = []
+        params.extend(split_bytes(address))
+        params.extend(split_bytes(length))
 
-        params = tx.params
         for dxl_id, value in zip(dxl_ids, values):
             params.append(dxl_id)
             params.extend(split_bytes(value, n_bytes=length))
 
-        tx = replace(tx, params=params)
-        ok = tx.write_to(self.serial)
+        tx = InstructionPacketV2(BROADCAST_ID, SYNC_WRITE, params)
 
-        return ok
+        transmit(self.serial, tx)
 
     def fast_sync_read(self, dxl_ids, address, length):
-        tx = InstructionPacketV2.sync_read(dxl_ids, FAST_SYNC_READ, address, length)
-        ok = tx.write_to(self.serial)
+        params = []
+        params.extend(split_bytes(address))
+        params.extend(split_bytes(length))
+        params.extend(dxl_ids)
 
-        if not ok:
-            return None
+        tx = InstructionPacketV2(BROADCAST_ID, FAST_SYNC_READ, params)
 
-        rx = StatusPacketV2.read_from(self.serial)
+        r = get_response(self.serial, tx)
 
-        if rx is None:
-            return None
+        if r.ok:
+            r = parse_nested(r, [length] * len(dxl_ids))
 
-        status = Status.parse_nested(rx, [length] * len(dxl_ids))
-
-        if not status.is_ok():
-            return None
-
-        return status.data
+        return r
 
     def bulk_read(self, dxl_ids, addresses, lengths):
-        tx = InstructionPacketV2.bulk_read(dxl_ids, BULK_READ, addresses, lengths)
-        ok = tx.write_to(self.serial)
+        params = []
+        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
+            params.append(dxl_id)
+            params.extend(split_bytes(address))
+            params.extend(split_bytes(length))
 
-        if not ok:
-            return None
+        tx = InstructionPacketV2(BROADCAST_ID, BULK_READ, params)
 
-        data = []
-        for _ in dxl_ids:
-            rx = StatusPacketV2.read_from(self.serial)
-
-            if rx is None:
-                return None
-
-            status = Status.parse_bytes(rx)
-
-            if not status.is_ok():
-                return None
-
-            data.append(status.data)
-
-        return data
+        return self._sync_read(tx, dxl_ids)
 
     def bulk_write(self, dxl_ids, addresses, lengths, values):
-        tx = InstructionPacketV2.bulk_write(dxl_ids, addresses, lengths, values)
-        ok = tx.write_to(self.serial)
+        params = []
+        for dxl_id, address, length, value in zip(dxl_ids, addresses, lengths, values):
+            params.append(dxl_id)
+            params.extend(split_bytes(address))
+            params.extend(split_bytes(length))
+            params.extend(split_bytes(value, n_bytes=length))
 
-        return ok
+        tx = InstructionPacketV2(BROADCAST_ID, BULK_WRITE, params)
+
+        transmit(self.serial, tx)
 
     def fast_bulk_read(self, dxl_ids, addresses, lengths):
-        tx = InstructionPacketV2.bulk_read(dxl_ids, FAST_BULK_READ, addresses, lengths)
-        ok = tx.write_to(self.serial)
+        params = []
+        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
+            params.append(dxl_id)
+            params.extend(split_bytes(address))
+            params.extend(split_bytes(length))
 
-        if not ok:
-            return None
+        tx = InstructionPacketV2(BROADCAST_ID, FAST_BULK_READ, params)
 
-        rx = StatusPacketV2.read_from(self.serial)
+        r = get_response(self.serial, tx)
 
-        if rx is None:
-            return None
+        if r.ok:
+            r = parse_nested(r, lengths)
 
-        status = Status.parse_nested(rx, lengths)
-
-        if not status.is_ok():
-            return None
-
-        return status.data
+        return r
