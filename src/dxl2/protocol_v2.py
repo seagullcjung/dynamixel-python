@@ -7,9 +7,11 @@
 import copy
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, List, Optional, Tuple
+from typing import List, Tuple
 
 import serial
+
+from .response import Response
 
 BROADCAST_ID = 0xFE
 
@@ -259,34 +261,6 @@ def receive(ser):
         raise HardwareError(packet_id)
 
     return rx
-
-
-@dataclass(frozen=True)
-class Response:
-    timeout: Optional[bool] = None
-    corrupted: Optional[bool] = None
-
-    error: Optional[int] = None
-    dxl_id: Optional[int] = None
-    data: Optional[Any] = None
-
-    @classmethod
-    def from_rx(cls, rx):
-        return cls(
-            timeout=False,
-            corrupted=not rx.valid,
-            error=rx.error & 0x07,
-            dxl_id=rx.packet_id,
-            data=rx.params,
-        )
-
-    @property
-    def ok(self):
-        ok = not self.timeout and not self.corrupted
-        if self.error is None:
-            return ok
-
-        return ok and self.error == 0
 
 
 def get_response(ser, tx):
