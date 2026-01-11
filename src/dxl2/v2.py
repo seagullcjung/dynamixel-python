@@ -7,7 +7,8 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-from .base import BaseConnection, BaseDriver, BaseParams, Response
+from .base import BaseConnection, BaseDriver, BaseParams
+from .response import Response
 
 BROADCAST_ID = 0xFE
 
