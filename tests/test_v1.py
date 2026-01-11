@@ -298,6 +298,7 @@ def test_v1_bulk_read(mock_serial, driver):
     params = BulkParams()
     params.add_address(ID, 0x1E, 2)
     params.add_address(ID + 1, 0x24, 4)
+
     r = driver.bulk_read(params)
 
     assert r.ok
