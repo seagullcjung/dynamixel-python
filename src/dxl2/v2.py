@@ -4,7 +4,7 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import List, Tuple
 
 from .base import BaseConnection, BaseDriver, BaseParams, Response
@@ -140,7 +140,7 @@ class Packet:
 class InstructionPacket(Packet):
     packet_id: int
     instruction: int
-    params: Params = Params()
+    params: Params = field(default_factory=Params)
 
     header: List[int] = field(
         default_factory=lambda: [0xFF, 0xFF, 0xFD, 0x00],
@@ -282,7 +282,7 @@ class Connection(BaseConnection):
 
 
 class Driver(BaseDriver):
-    def __init__(self, port, baudrate=1_000_000, timeout:float=1):
+    def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         self.conn = Connection(port, baudrate, timeout)
 
     def connect(self):

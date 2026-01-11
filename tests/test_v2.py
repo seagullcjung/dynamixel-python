@@ -2,8 +2,8 @@ import pytest
 from serial import Serial
 
 from dxl2.v2 import (
-    Driver,
     Connection,
+    Driver,
     HardwareError,
     calc_crc_16,
     split_bytes,
@@ -66,7 +66,6 @@ def build_rx(packet_id=ID, error=ERROR, params=PARAMS):
 def conn(mock_serial):
     with Connection(mock_serial.port, timeout=TIMEOUT) as conn:
         yield conn
-
 
 
 def test_v2_read_packet(mock_serial, conn):
