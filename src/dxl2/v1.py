@@ -256,13 +256,15 @@ class MotorDriver(BaseDriver):
         return self._send(dxl_id, REBOOT)
 
     def sync_write(self, params: SyncParams):
-        assert params.num_motors > 0
+        assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
     def bulk_read(self, params: BulkParams):
-        assert params.num_motors > 0
+        assert params.num_motors > 0, (
+            "You need to add addresses with SyncParams.add_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
         self.conn.write_packet(tx)

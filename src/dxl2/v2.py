@@ -487,20 +487,20 @@ class MotorDriver(BaseDriver):
         return r
 
     def sync_read(self, params: SyncParams):
-        assert params.num_motors > 0
+        assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_READ, params)
 
         return self._sync_read(tx, params.num_motors)
 
     def sync_write(self, params: SyncParams):
-        assert params.num_motors > 0
+        assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
     def fast_sync_read(self, params: SyncParams):
-        assert params.num_motors > 0
+        assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, FAST_SYNC_READ, params)
         self.conn.write_packet(tx)
@@ -513,19 +513,25 @@ class MotorDriver(BaseDriver):
         return r
 
     def bulk_read(self, params: BulkParams):
-        assert params.num_motors > 0 and params.type == BulkType.READ
+        assert params.num_motors > 0 and params.type == BulkType.READ, (
+            "You need to add addresses with BulkParams.ad_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
         return self._sync_read(tx, params.num_motors)
 
     def bulk_write(self, params: BulkParams):
-        assert params.num_motors > 0 and params.type == BulkType.WRITE
+        assert params.num_motors > 0 and params.type == BulkType.WRITE, (
+            "You need to add values with BulkParams.add_value"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_WRITE, params)
         self.conn.write_packet(tx)
 
     def fast_bulk_read(self, params: BulkParams):
-        assert params.num_motors > 0 and params.type == BulkType.READ
+        assert params.num_motors > 0 and params.type == BulkType.READ, (
+            "You need to add addresses with BulkParams.ad_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, FAST_BULK_READ, params)
         self.conn.write_packet(tx)
