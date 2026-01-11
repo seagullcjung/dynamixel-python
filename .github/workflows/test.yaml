@@ -33,7 +33,7 @@ jobs:
           python -m pip install ruff
 
       - name: Run Ruff
-        run: ruff check --output-format=github
+        run: ruff check --fix --output-format=github
 
   testing:
     runs-on: ubuntu-latest
