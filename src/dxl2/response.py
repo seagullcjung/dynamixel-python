@@ -14,10 +14,7 @@ class Response:
         if rx is None:
             return cls(timeout=True)
 
-        if rx.valid and rx.error == 0:
-            data = rx.params
-        else:
-            data = rx.params.raw
+        data = rx.params if rx.valid and rx.error == 0 else rx.params.raw
 
         return cls(error=rx.error, valid=rx.valid, data=data)
 

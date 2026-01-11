@@ -294,9 +294,6 @@ class MotorDriver(BaseDriver):
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
-        if r is None:
-            r = Response(timeout=True)
-        else:
-            r = replace(r, data=data)
+        r = Response(timeout=True) if r is None else replace(r, data=data)
 
         return r
