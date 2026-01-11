@@ -375,6 +375,9 @@ class MotorDriver(BaseDriver):
     def disconnect(self):
         self.conn.close()
 
+    def set_baudrate(self, baudrate):
+        self.conn.baudrate = baudrate
+
     def ping(self, dxl_id):
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
