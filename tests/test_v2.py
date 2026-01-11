@@ -3,8 +3,8 @@ from serial import Serial
 
 from dxl2.v2 import (
     Connection,
-    Driver,
     HardwareError,
+    MotorBus,
     calc_crc_16,
     split_bytes,
 )
@@ -193,7 +193,7 @@ def test_v2_read_packet_raises(mock_serial, conn):
 
 @pytest.fixture
 def driver(mock_serial):
-    with Driver(mock_serial.port, timeout=TIMEOUT) as driver:
+    with MotorBus(mock_serial.port, timeout=TIMEOUT) as driver:
         yield driver
 
 
