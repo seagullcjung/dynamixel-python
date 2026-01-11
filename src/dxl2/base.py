@@ -54,13 +54,7 @@ class BaseConnection(serial.Serial):
                 yield self.read_packet()
 
     def write_packet(self, tx):
-        tx.add_stuffing()
-        buffer = tx.raw
-
-        count = 0
-        while count < len(buffer):
-            count = self.write(buffer)
-            buffer = buffer[count:]
+        raise NotImplementedError
 
 
 class BaseParams:

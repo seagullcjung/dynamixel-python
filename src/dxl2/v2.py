@@ -197,7 +197,7 @@ class StatusPacket(BasePacket):
         self.packet_id = buffer[4]
         self.length = merge_bytes(buffer[5:7])
         self.instruction, self.error = buffer[7:9]
-        self.params = Params(buffer[9 : 9 + self.length - 4])
+        self.params = Params(buffer[9:-2])
         self.crc = merge_bytes(buffer[-2:])
 
     @property
@@ -274,6 +274,15 @@ class Connection(BaseConnection):
             raise HardwareError(packet_id)
 
         return rx
+
+    def write_packet(self, tx):
+        tx.add_stuffing()
+        buffer = tx.raw
+
+        count = 0
+        while count < len(buffer):
+            count = self.write(buffer)
+            buffer = buffer[count:]
 
 
 class Driver(BaseDriver):
