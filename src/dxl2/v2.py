@@ -305,7 +305,7 @@ class SyncParams(Params):
         if self.type is None:
             self.type = SyncType.READ
         else:
-            assert self.type == SyncType.READ
+            assert self.type == SyncType.READ, "You can't mix add_motor and add_value"
 
         self.add(dxl_id)
         self.num_motors += 1
@@ -314,7 +314,7 @@ class SyncParams(Params):
         if self.type is None:
             self.type = SyncType.WRITE
         else:
-            assert self.type == SyncType.WRITE
+            assert self.type == SyncType.WRITE, "You can't mix add_motor and add_value"
 
         self.add(dxl_id)
         self.add(value, self.length)
@@ -340,7 +340,7 @@ class BulkParams(Params):
         if self.type is None:
             self.type = BulkType.READ
         else:
-            assert self.type == BulkType.READ
+            assert self.type == BulkType.READ, "You can't mix add_address and add_value"
 
         self.add(dxl_id)
         self.add(address, 2)
@@ -353,7 +353,9 @@ class BulkParams(Params):
         if self.type is None:
             self.type = BulkType.WRITE
         else:
-            assert self.type == BulkType.WRITE
+            assert self.type == BulkType.WRITE, (
+                "You can't mix add_address and add_value"
+            )
 
         self.add(dxl_id)
         self.add(address, 2)
