@@ -2,9 +2,11 @@ import pytest
 from serial import Serial
 
 from dxl2.v2 import (
+    BulkParams,
     Connection,
     HardwareError,
-    MotorBus,
+    MotorDriver,
+    SyncParams,
     calc_crc_16,
     split_bytes,
 )
@@ -193,7 +195,7 @@ def test_v2_read_packet_raises(mock_serial, conn):
 
 @pytest.fixture
 def driver(mock_serial):
-    with MotorBus(mock_serial.port, timeout=TIMEOUT) as driver:
+    with MotorDriver(mock_serial.port, timeout=TIMEOUT) as driver:
         yield driver
 
 
@@ -402,7 +404,11 @@ def test_v2_sync_read(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2))
 
-    r = driver.sync_read([ID, ID + 1], 0x0184, 4)
+    params = SyncParams(0x0184, 4)
+    params.add_motor(ID)
+    params.add_motor(ID + 1)
+
+    r = driver.sync_read(params)
 
     assert r.ok
     assert r.data == [0x010101A6, 0x010101B6]
@@ -419,7 +425,11 @@ def test_v2_sync_read_partial(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2))
 
-    r = driver.sync_read([ID, ID + 1], 0x0184, 4)
+    params = SyncParams(0x0184, 4)
+    params.add_motor(ID)
+    params.add_motor(ID + 1)
+
+    r = driver.sync_read(params)
 
     assert not r.ok
 
@@ -441,7 +451,11 @@ def test_v2_sync_write(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
-    driver.sync_write([1, 2], 0x0174, 4, [0x01010196, 0x01210136])
+    params = SyncParams(0x0174, 4)
+    params.add_value(1, 0x01010196)
+    params.add_value(2, 0x01210136)
+
+    driver.sync_write(params)
 
     assert driver.conn.read() == b"x"
 
@@ -473,7 +487,12 @@ def test_v2_fast_sync_read(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.fast_sync_read([1, 2, 3], 0x0184, 4)
+    params = SyncParams(0x0184, 4)
+    params.add_motor(1)
+    params.add_motor(2)
+    params.add_motor(3)
+
+    r = driver.fast_sync_read(params)
 
     assert r.ok
     assert r.data == [0x28937423, 0x27933423, 0x17933423]
@@ -496,7 +515,10 @@ def test_v2_fast_sync_read_single(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.fast_sync_read([1], 0x0184, 4)
+    params = SyncParams(0x0184, 4)
+    params.add_motor(1)
+
+    r = driver.fast_sync_read(params)
 
     assert r.ok
     assert r.data == [0x28937423]
@@ -530,7 +552,12 @@ def test_v2_bulk_read(mock_serial, driver):
         receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2 + rx_3)
     )
 
-    r = driver.bulk_read([1, 2, 3], [0x0124, 0x0114, 0x0110], [4, 2, 1])
+    params = BulkParams()
+    params.add_address(1, 0x0124, 4)
+    params.add_address(2, 0x0114, 2)
+    params.add_address(3, 0x0110, 1)
+
+    r = driver.bulk_read(params)
 
     assert r.ok
     assert r.data == [0x34832902, 0x8329, 0x39]
@@ -564,7 +591,12 @@ def test_v2_bulk_read_partial(mock_serial, driver):
         receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2 + rx_3)
     )
 
-    r = driver.bulk_read([1, 2, 3], [0x0124, 0x0114, 0x0110], [4, 2, 1])
+    params = BulkParams()
+    params.add_address(1, 0x0124, 4)
+    params.add_address(2, 0x0114, 2)
+    params.add_address(3, 0x0110, 1)
+
+    r = driver.bulk_read(params)
 
     assert not r.ok
 
@@ -594,9 +626,12 @@ def test_v2_bulk_write(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
-    driver.bulk_write(
-        [1, 2, 3], [0x0124, 0x0114, 0x0110], [4, 2, 1], [0x34832902, 0x8329, 0x39]
-    )
+    params = BulkParams()
+    params.add_value(1, 0x0124, 4, 0x34832902)
+    params.add_value(2, 0x0114, 2, 0x8329)
+    params.add_value(3, 0x0110, 1, 0x39)
+
+    driver.bulk_write(params)
 
     assert driver.conn.read() == b"x"
 
@@ -638,7 +673,12 @@ def test_v2_fast_bulk_read(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.fast_bulk_read([1, 2, 3], [0x0124, 0x0114, 0x0110], [4, 2, 1])
+    params = BulkParams()
+    params.add_address(1, 0x0124, 4)
+    params.add_address(2, 0x0114, 2)
+    params.add_address(3, 0x0110, 1)
+
+    r = driver.fast_bulk_read(params)
 
     assert r.ok
     assert r.data == [0x28937423, 0x2933, 0x13]
@@ -663,7 +703,10 @@ def test_v2_fast_bulk_read_single(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.fast_bulk_read([1], [0x0124], [4])
+    params = BulkParams()
+    params.add_address(1, 0x0124, 4)
+
+    r = driver.fast_bulk_read(params)
 
     assert r.ok
     assert r.data == [0x28937423]

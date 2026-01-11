@@ -1,11 +1,7 @@
 import pytest
 from serial import Serial
 
-from dxl2.v1 import (
-    Connection,
-    MotorBus,
-    calc_checksum,
-)
+from dxl2.v1 import BulkParams, Connection, MotorDriver, SyncParams, calc_checksum
 
 TIMEOUT = 0.01
 
@@ -168,7 +164,7 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
 @pytest.fixture
 def driver(mock_serial):
-    with MotorBus(mock_serial.port, timeout=TIMEOUT) as driver:
+    with MotorDriver(mock_serial.port, timeout=TIMEOUT) as driver:
         yield driver
 
 
@@ -278,7 +274,11 @@ def test_v1_sync_write(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
 
-    driver.sync_write([ID, ID + 1], 0x1E, 4, [0x01500010, 0x03600220])
+    params = SyncParams(0x1E, 4)
+    params.add_value(ID, 0x01500010)
+    params.add_value(ID + 1, 0x03600220)
+
+    driver.sync_write(params)
 
     assert driver.conn.read() == b"x"
 
@@ -295,7 +295,11 @@ def test_v1_bulk_read(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2))
 
-    r = driver.bulk_read([ID, ID + 1], [0x1E, 0x24], [2, 4])
+    params = BulkParams()
+    params.add_address(ID, 0x1E, 2)
+    params.add_address(ID + 1, 0x24, 4)
+
+    r = driver.bulk_read(params)
 
     assert r.ok
     assert r.data == [0x0182, 0x01020372]

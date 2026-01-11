@@ -5,9 +5,10 @@
 # See the LICENSE file in the project root for full license text.
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Tuple
 
-from .base import BaseBus, BaseConnection, BasePacket, BaseParams
+from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
 from .response import Response
 
 BROADCAST_ID = 0xFE
@@ -282,10 +283,89 @@ class Connection(BaseConnection):
         count = 0
         while count < len(buffer):
             count = self.write(buffer)
-            buffer = buffer[count:]
 
 
-class MotorBus(BaseBus):
+class SyncType(Enum):
+    READ = 0
+    WRITE = 1
+
+
+class SyncParams(Params):
+    def __init__(self, address, length):
+        super().__init__()
+        self.add(address, 2)
+        self.add(length, 2)
+
+        self.length = length
+        self.num_motors = 0
+
+        self.type = None
+
+    def add_motor(self, dxl_id):
+        if self.type is None:
+            self.type = SyncType.READ
+        else:
+            assert self.type == SyncType.READ, "You can't mix add_motor and add_value"
+
+        self.add(dxl_id)
+        self.num_motors += 1
+
+    def add_value(self, dxl_id, value):
+        if self.type is None:
+            self.type = SyncType.WRITE
+        else:
+            assert self.type == SyncType.WRITE, "You can't mix add_motor and add_value"
+
+        self.add(dxl_id)
+        self.add(value, self.length)
+
+        self.num_motors += 1
+
+
+class BulkType(Enum):
+    READ = 0
+    WRITE = 1
+
+
+class BulkParams(Params):
+    def __init__(self):
+        super().__init__()
+
+        self.num_motors = 0
+        self.type = None
+
+        self.lengths = []
+
+    def add_address(self, dxl_id, address, length):
+        if self.type is None:
+            self.type = BulkType.READ
+        else:
+            assert self.type == BulkType.READ, "You can't mix add_address and add_value"
+
+        self.add(dxl_id)
+        self.add(address, 2)
+        self.add(length, 2)
+
+        self.num_motors += 1
+        self.lengths.append(length)
+
+    def add_value(self, dxl_id, address, length, value):
+        if self.type is None:
+            self.type = BulkType.WRITE
+        else:
+            assert self.type == BulkType.WRITE, (
+                "You can't mix add_address and add_value"
+            )
+
+        self.add(dxl_id)
+        self.add(address, 2)
+        self.add(length, 2)
+        self.add(value, length)
+
+        self.num_motors += 1
+
+
+class MotorDriver(BaseDriver):
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         self.conn = Connection(port, baudrate, timeout)
 
@@ -393,12 +473,12 @@ class MotorBus(BaseBus):
     def control_table_restore(self, dxl_id):
         return self._send(dxl_id, CONTROL_TABLE_BACKUP, [0x02, 0x43, 0x54, 0x52, 0x4C])
 
-    def _sync_read(self, tx, dxl_ids):
+    def _sync_read(self, tx, count):
         self.conn.write_packet(tx)
 
         data = []
         r = None
-        for r in Response.stream(self.conn, count=len(dxl_ids)):
+        for r in Response.stream(self.conn, count=count):
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
@@ -408,35 +488,21 @@ class MotorBus(BaseBus):
         r.data = data
         return r
 
-    def sync_read(self, dxl_ids, address, length):
-        params = Params()
-        params.add(address, 2)
-        params.add(length, 2)
-        for dxl_id in dxl_ids:
-            params.add(dxl_id)
+    def sync_read(self, params: SyncParams):
+        assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_READ, params)
 
-        return self._sync_read(tx, dxl_ids)
+        return self._sync_read(tx, params.num_motors)
 
-    def sync_write(self, dxl_ids, address, length, values):
-        params = Params()
-        params.add(address, 2)
-        params.add(length, 2)
-
-        for dxl_id, value in zip(dxl_ids, values):
-            params.add(dxl_id)
-            params.add(value, length)
+    def sync_write(self, params: SyncParams):
+        assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
-    def fast_sync_read(self, dxl_ids, address, length):
-        params = Params()
-        params.add(address, 2)
-        params.add(length, 2)
-        for dxl_id in dxl_ids:
-            params.add(dxl_id)
+    def fast_sync_read(self, params: SyncParams):
+        assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, FAST_SYNC_READ, params)
         self.conn.write_packet(tx)
@@ -444,37 +510,30 @@ class MotorBus(BaseBus):
         r = Response.get(self.conn)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_nested([length] * len(dxl_ids))
+            r.data = r.data.parse_nested([params.length] * params.num_motors)
 
         return r
 
-    def bulk_read(self, dxl_ids, addresses, lengths):
-        params = Params()
-        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
-            params.add(dxl_id)
-            params.add(address, 2)
-            params.add(length, 2)
+    def bulk_read(self, params: BulkParams):
+        assert params.num_motors > 0 and params.type == BulkType.READ, (
+            "You need to add addresses with BulkParams.ad_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
-        return self._sync_read(tx, dxl_ids)
+        return self._sync_read(tx, params.num_motors)
 
-    def bulk_write(self, dxl_ids, addresses, lengths, values):
-        params = Params()
-        for dxl_id, address, length, value in zip(dxl_ids, addresses, lengths, values):
-            params.add(dxl_id)
-            params.add(address, 2)
-            params.add(length, 2)
-            params.add(value, length)
+    def bulk_write(self, params: BulkParams):
+        assert params.num_motors > 0 and params.type == BulkType.WRITE, (
+            "You need to add values with BulkParams.add_value"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_WRITE, params)
         self.conn.write_packet(tx)
 
-    def fast_bulk_read(self, dxl_ids, addresses, lengths):
-        params = Params()
-        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
-            params.add(dxl_id)
-            params.add(address, 2)
-            params.add(length, 2)
+    def fast_bulk_read(self, params: BulkParams):
+        assert params.num_motors > 0 and params.type == BulkType.READ, (
+            "You need to add addresses with BulkParams.ad_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, FAST_BULK_READ, params)
         self.conn.write_packet(tx)
@@ -482,6 +541,6 @@ class MotorBus(BaseBus):
         r = Response.get(self.conn)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_nested(lengths)
+            r.data = r.data.parse_nested(params.lengths)
 
         return r

@@ -7,7 +7,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-from .base import BaseBus, BaseConnection, BasePacket, BaseParams
+from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
 from .response import Response
 
 BROADCAST_ID = 0xFE
@@ -160,7 +160,37 @@ class Connection(BaseConnection):
             buffer = buffer[count:]
 
 
-class MotorBus(BaseBus):
+class SyncParams(Params):
+    def __init__(self, address, length):
+        super().__init__()
+        self.add(address)
+        self.add(length)
+
+        self.length = length
+        self.num_motors = 0
+
+    def add_value(self, dxl_id, value):
+        self.add(dxl_id)
+        self.add(value, self.length)
+
+        self.num_motors += 1
+
+
+class BulkParams(Params):
+    def __init__(self):
+        super().__init__([0x00])
+
+        self.num_motors = 0
+
+    def add_address(self, dxl_id, address, length):
+        self.add(length)
+        self.add(dxl_id)
+        self.add(address)
+
+        self.num_motors += 1
+
+
+class MotorDriver(BaseDriver):
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         self.conn = Connection(port, baudrate, timeout)
 
@@ -225,28 +255,23 @@ class MotorBus(BaseBus):
     def reboot(self, dxl_id):
         return self._send(dxl_id, REBOOT)
 
-    def sync_write(self, dxl_ids, address, length, values):
-        params = Params([address, length])
-        for dxl_id, value in zip(dxl_ids, values):
-            params.add(dxl_id)
-            params.add(value, length)
+    def sync_write(self, params: SyncParams):
+        assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
-    def bulk_read(self, dxl_ids, addresses, lengths):
-        params = Params([0x00])
-        for dxl_id, address, length in zip(dxl_ids, addresses, lengths):
-            params.add(length)
-            params.add(dxl_id)
-            params.add(address)
+    def bulk_read(self, params: BulkParams):
+        assert params.num_motors > 0, (
+            "You need to add addresses with SyncParams.add_address"
+        )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
         self.conn.write_packet(tx)
 
         data = []
         r = None
-        for r in Response.stream(self.conn, count=len(dxl_ids)):
+        for r in Response.stream(self.conn, count=params.num_motors):
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
