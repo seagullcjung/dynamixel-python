@@ -271,16 +271,17 @@ def test_v1_sync_write(mock_serial, driver):
         SYNC_WRITE,
         params=[0x1E, 0x04, ID, 0x10, 0x00, 0x50, 0x01, ID + 1, 0x20, 0x02, 0x60, 0x03],
     )
+    rx = build_rx(params=[])
 
-    stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=b"x")
+    stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
     params = SyncParams(0x1E, 4)
     params.add_value(ID, 0x01500010)
     params.add_value(ID + 1, 0x03600220)
 
-    driver.sync_write(params)
+    r = driver.sync_write(params)
 
-    assert driver.conn.read() == b"x"
+    assert r.ok
 
     assert stub.called
     assert stub.calls == 1

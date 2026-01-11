@@ -4,9 +4,9 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
 from .response import Response
@@ -30,16 +30,16 @@ BULK_WRITE = 0x93
 FAST_BULK_READ = 0x9A
 
 
-def split_bytes(data, *, n_bytes=2):
+def split_bytes(data: int, *, n_bytes: int = 2) -> List[int]:
     array = data.to_bytes(n_bytes, byteorder="little")
     return list(array)
 
 
-def merge_bytes(array):
+def merge_bytes(array: List[int]) -> int:
     return int.from_bytes(array, byteorder="little")
 
 
-def calc_crc_16(packet):
+def calc_crc_16(packet: List[int]) -> int:
     crc_table = [
         0x0000, 0x8005, 0x800F, 0x000A, 0x801B, 0x001E, 0x0014, 0x8011,
         0x8033, 0x0036, 0x003C, 0x8039, 0x0028, 0x802D, 0x8027, 0x0022,
@@ -85,25 +85,25 @@ def calc_crc_16(packet):
 
 
 class Params(BaseParams):
-    def __init__(self, params=None):
+    def __init__(self, params=None) -> None:
         if params is None:
             params = []
 
         self.params = params
 
-    def add(self, value, n_bytes=1):
+    def add(self, value: int, n_bytes: int = 1) -> None:
         self.params.extend(split_bytes(value, n_bytes=n_bytes))
 
-    def parse_ping(self):
+    def parse_ping(self) -> Dict[str, int]:
         return {
             "model_number": merge_bytes(self.params[:2]),
             "firmware_version": self.params[2],
         }
 
-    def parse_bytes(self):
+    def parse_bytes(self) -> int:
         return merge_bytes(self.params)
 
-    def parse_nested(self, lengths):
+    def parse_nested(self, lengths: List[int]) -> List[int]:
         packet = self.params[: lengths[0] + 1]
 
         data = []
@@ -120,15 +120,12 @@ class Params(BaseParams):
 
             start += length + 4
 
-            if (error & 0x07) != 0:
-                return Response(timeout=False, corrupted=False, error=error, data=data)
-
             data.append(merge_bytes(packet[4:]))
 
         return data
 
     @property
-    def raw(self):
+    def raw(self) -> bytes:
         return bytes(self.params)
 
 
@@ -146,7 +143,7 @@ class InstructionPacket(BasePacket):
     crc: int = field(init=False)
 
     @property
-    def raw(self):
+    def raw(self) -> bytes:
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -156,7 +153,7 @@ class InstructionPacket(BasePacket):
         packet.extend(split_bytes(self.crc))
         return bytes(packet)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "length", len(self.params.raw) + 3)
 
         packet = []
@@ -167,7 +164,7 @@ class InstructionPacket(BasePacket):
         packet.extend(self.params.raw)
         object.__setattr__(self, "crc", calc_crc_16(packet))
 
-    def add_stuffing(self):
+    def add_stuffing(self) -> None:
         params = list(self.params.raw)
         indices = [
             i + 3
@@ -191,7 +188,7 @@ class StatusPacket(BasePacket):
     params: Params
     crc: int
 
-    def __init__(self, buffer):
+    def __init__(self, buffer) -> None:
         buffer = list(buffer)
 
         self.header = tuple(buffer[:4])
@@ -202,7 +199,7 @@ class StatusPacket(BasePacket):
         self.crc = merge_bytes(buffer[-2:])
 
     @property
-    def raw(self):
+    def raw(self) -> bytes:
         packet = []
         packet.extend(self.header)
         packet.append(self.packet_id)
@@ -214,10 +211,10 @@ class StatusPacket(BasePacket):
         return bytes(packet)
 
     @property
-    def valid(self):
+    def valid(self) -> bool:
         return calc_crc_16(list(self.raw)[:-2]) == self.crc
 
-    def remove_stuffing(self):
+    def remove_stuffing(self) -> None:
         params = list(self.params.raw)
 
         indices = [
@@ -230,7 +227,7 @@ class StatusPacket(BasePacket):
             params.pop(i)
 
         self.params = Params(params)
-        self.crc = calc_crc_16(self.raw[:-2])
+        self.crc = calc_crc_16(list(self.raw)[:-2])
 
 
 class HardwareError(Exception):
@@ -245,7 +242,7 @@ class HardwareError(Exception):
 
 
 class Connection(BaseConnection):
-    def read_packet(self):
+    def read_packet(self) -> Optional[StatusPacket]:
         packet = self.read_header([0xFF, 0xFF, 0xFD, 0x00])
 
         if len(packet) < 4:
@@ -268,15 +265,12 @@ class Connection(BaseConnection):
 
         rx = StatusPacket(packet)
 
-        if rx.valid:
-            rx.remove_stuffing()
-
         if rx.error & 0x80:
             raise HardwareError(packet_id)
 
         return rx
 
-    def write_packet(self, tx):
+    def write_packet(self, tx: InstructionPacket) -> None:
         tx.add_stuffing()
         buffer = tx.raw
 
@@ -291,7 +285,7 @@ class SyncType(Enum):
 
 
 class SyncParams(Params):
-    def __init__(self, address, length):
+    def __init__(self, address, length) -> None:
         super().__init__()
         self.add(address, 2)
         self.add(length, 2)
@@ -301,7 +295,7 @@ class SyncParams(Params):
 
         self.type = None
 
-    def add_motor(self, dxl_id):
+    def add_motor(self, dxl_id) -> None:
         if self.type is None:
             self.type = SyncType.READ
         else:
@@ -378,14 +372,19 @@ class MotorDriver(BaseDriver):
     def set_baudrate(self, baudrate):
         self.conn.baudrate = baudrate
 
-    def ping(self, dxl_id):
+    def ping(self, dxl_id) -> Response:
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        if rx is not None and rx.valid:
+            rx.remove_stuffing()
+
+        r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_ping()
+            r = replace(r, data=r.data.parse_ping())
 
         return r
 
@@ -393,19 +392,25 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(BROADCAST_ID, PING)
         self.conn.write_packet(tx)
 
-        r = None
+        r = Response()
+
         data = {}
-        for r in Response.stream(self.conn):
-            if not r.ok or r.data is None:
+        for rx in self.conn.stream_packets():
+            if rx is None:
                 break
 
-            data.update({r.dxl_id: r.data.parse_ping()})
+            r = replace(r, error=rx.error, valid=rx.valid)
 
-        if r is None:
-            return Response(timeout=True)
+            if r.ok:
+                if rx is not None and rx.valid:
+                    rx.remove_stuffing()
 
-        r.timeout = False
-        r.data = data
+                data.update({rx.packet_id: rx.params.parse_ping()})
+            else:
+                self.conn.reset_input_buffer()
+                break
+
+        r = replace(r, data=data)
         return r
 
     def read(self, dxl_id, address, length):
@@ -416,10 +421,15 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(dxl_id, READ, params)
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        if rx is not None and rx.valid:
+            rx.remove_stuffing()
+
+        r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_bytes()
+            r = replace(r, data=r.data.parse_bytes())
 
         return r
 
@@ -431,7 +441,9 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
 
-        return Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
 
     def write(self, dxl_id, address, length, value):
         return self._write(dxl_id, WRITE, address, length, value)
@@ -447,7 +459,10 @@ class MotorDriver(BaseDriver):
 
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
-        return Response.get(self.conn)
+
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
 
     def action(self, dxl_id):
         return self._send(dxl_id, ACTION)
@@ -479,16 +494,19 @@ class MotorDriver(BaseDriver):
     def _sync_read(self, tx, count):
         self.conn.write_packet(tx)
 
+        r = Response(timeout=True)
+
         data = []
-        r = None
-        for r in Response.stream(self.conn, count=count):
+        for rx in self.conn.stream_packets(count=count):
+            if rx is not None and rx.valid:
+                rx.remove_stuffing()
+
+            r = Response.from_rx(rx)
+
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
-        if r is None:
-            return Response(timeout=True, corrupted=False)
-
-        r.data = data
+        r = replace(r, data=data)
         return r
 
     def sync_read(self, params: SyncParams):
@@ -510,10 +528,14 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(BROADCAST_ID, FAST_SYNC_READ, params)
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_nested([params.length] * params.num_motors)
+            r = replace(
+                r, data=r.data.parse_nested([params.length] * params.num_motors)
+            )
 
         return r
 
@@ -541,9 +563,11 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(BROADCAST_ID, FAST_BULK_READ, params)
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_nested(params.lengths)
+            r = replace(r, data=r.data.parse_nested(params.lengths))
 
         return r
