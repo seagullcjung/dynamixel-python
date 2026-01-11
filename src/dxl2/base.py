@@ -9,6 +9,12 @@ import time
 import serial
 
 
+class BasePacket:
+    @property
+    def raw(self):
+        raise NotImplementedError
+
+
 class BaseConnection(serial.Serial):
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         super().__init__(baudrate=baudrate, timeout=timeout, write_timeout=timeout)

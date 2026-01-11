@@ -7,7 +7,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-from .base import BaseConnection, BaseDriver, BaseParams
+from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
 from .response import Response
 
 BROADCAST_ID = 0xFE
@@ -131,14 +131,8 @@ class Params(BaseParams):
         return bytes(self.params)
 
 
-class Packet:
-    @property
-    def raw(self):
-        raise NotImplementedError
-
-
 @dataclass(frozen=True)
-class InstructionPacket(Packet):
+class InstructionPacket(BasePacket):
     packet_id: int
     instruction: int
     params: Params = field(default_factory=Params)
@@ -187,7 +181,7 @@ class InstructionPacket(Packet):
 
 
 @dataclass
-class StatusPacket(Packet):
+class StatusPacket(BasePacket):
     header: Tuple[int, int, int, int]
     packet_id: int
     length: int
