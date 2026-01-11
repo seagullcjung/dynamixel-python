@@ -6,15 +6,4 @@
 
 from __future__ import annotations
 
-__all__ = [
-    "DynamixelSerialV1",
-    "DynamixelSerialV2",
-    "InstructionPacketV1",
-    "InstructionPacketV2",
-    "StatusPacketV1",
-    "StatusPacketV2",
-]
 __version__ = "0.0.5"
-
-from .protocol_v1 import DynamixelSerialV1, InstructionPacketV1, StatusPacketV1
-from .protocol_v2 import DynamixelSerialV2, InstructionPacketV2, StatusPacketV2
