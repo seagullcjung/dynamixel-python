@@ -3,7 +3,7 @@ from serial import Serial
 
 from dxl2.v1 import (
     Connection,
-    Driver,
+    MotorBus,
     calc_checksum,
 )
 
@@ -168,7 +168,7 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
 @pytest.fixture
 def driver(mock_serial):
-    with Driver(mock_serial.port, timeout=TIMEOUT) as driver:
+    with MotorBus(mock_serial.port, timeout=TIMEOUT) as driver:
         yield driver
 
 

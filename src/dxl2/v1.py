@@ -7,7 +7,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
+from .base import BaseBus, BaseConnection, BasePacket, BaseParams
 from .response import Response
 
 BROADCAST_ID = 0xFE
@@ -160,7 +160,7 @@ class Connection(BaseConnection):
             buffer = buffer[count:]
 
 
-class Driver(BaseDriver):
+class MotorBus(BaseBus):
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
         self.conn = Connection(port, baudrate, timeout)
 
