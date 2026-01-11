@@ -50,7 +50,6 @@ select = [
     "SIM",     # flake8-simplify
     "A",       # flake8-builtins (shadowing builtins)
     "RUF",     # Ruff-specific rules
-    "PERF",    # perflint (detects performance anti-patterns)
 ]
 ignore = [
     "E501",  # Line too long

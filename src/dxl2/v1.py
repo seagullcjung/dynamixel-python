@@ -4,7 +4,7 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Tuple
 
 from .base import BaseConnection, BaseDriver, BasePacket, BaseParams
@@ -207,17 +207,20 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
-        return r
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
 
     def read(self, dxl_id, address, length):
         tx = InstructionPacket(dxl_id, READ, Params([address, length]))
         self.conn.write_packet(tx)
 
-        r = Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r.data = r.data.parse_bytes()
+            r = replace(r, data=r.data.parse_bytes())
 
         return r
 
@@ -228,7 +231,12 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
 
-        return Response.get(self.conn)
+        if dxl_id == BROADCAST_ID:
+            return None
+
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
 
     def write(self, dxl_id, address, length, value):
         return self._write(dxl_id, WRITE, address, length, value)
@@ -245,14 +253,16 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
 
-        return Response.get(self.conn)
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
 
     def action(self):
         tx = InstructionPacket(BROADCAST_ID, ACTION)
         self.conn.write_packet(tx)
 
     def factory_reset(self, dxl_id):
-        assert dxl_id < 0xFE
+        assert dxl_id != BROADCAST_ID
         return self._send(dxl_id, FACTORY_RESET)
 
     def reboot(self, dxl_id):
@@ -264,6 +274,10 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
+        rx = self.conn.read_packet()
+
+        return Response.from_rx(rx)
+
     def bulk_read(self, params: BulkParams):
         assert params.num_motors > 0, (
             "You need to add addresses with SyncParams.add_address"
@@ -272,14 +286,17 @@ class MotorDriver(BaseDriver):
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
         self.conn.write_packet(tx)
 
-        data = []
         r = None
-        for r in Response.stream(self.conn, count=params.num_motors):
+        data = []
+        for rx in self.conn.stream_packets(count=params.num_motors):
+            r = Response.from_rx(rx)
+
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
         if r is None:
-            return Response(timeout=True, corrupted=False)
+            r = Response(timeout=True)
+        else:
+            r = replace(r, data=data)
 
-        r.data = data
         return r

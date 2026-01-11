@@ -78,6 +78,7 @@ def test_v2_read_packet(mock_serial, conn):
     serial.write(b"x")
 
     rx = conn.read_packet()
+    rx.remove_stuffing()
 
     assert rx is not None
 
@@ -101,6 +102,7 @@ def test_v2_read_packet_with_residue(mock_serial, conn):
     serial.write(b"x")
 
     rx = conn.read_packet()
+    rx.remove_stuffing()
 
     assert rx is not None
 
