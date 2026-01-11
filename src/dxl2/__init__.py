@@ -6,4 +6,8 @@
 
 from __future__ import annotations
 
+__all__ = ["v1", "v2"]
+
 __version__ = "0.0.5"
+
+from . import v1, v2
