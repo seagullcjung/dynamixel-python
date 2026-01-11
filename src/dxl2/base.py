@@ -72,7 +72,7 @@ class BaseParams:
         return bytes(self.params)
 
 
-class BaseBus:
+class BaseDriver:
     def connect(self):
         raise NotImplementedError
 
