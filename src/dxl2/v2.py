@@ -258,7 +258,9 @@ class Connection:
     def set_baudrate(self, baudrate) -> None:
         self.serial.baudrate = baudrate
 
-    def read_header(self, header):
+    def read_header(self):
+        header = [0xFF, 0xFF, 0xFD, 0x00]
+
         length = len(header)
         packet = []
         header_found = False
@@ -281,11 +283,9 @@ class Connection:
         return packet
 
     def read_packet(self) -> Optional[StatusPacket]:
-        header = [0xFF, 0xFF, 0xFD, 0x00]
+        packet = self.read_header()
 
-        packet = self.read_header(header)
-
-        if len(packet) < len(header):
+        if len(packet) < 4:
             return None
 
         buffer = list(self.serial.read(3))
