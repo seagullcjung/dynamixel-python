@@ -4,11 +4,13 @@
 # This file is part of a project licensed under the MIT License.
 # See the LICENSE file in the project root for full license text.
 
-from dataclasses import dataclass, field, replace
+import time
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from .base import BaseBus, BaseConnection, BasePacket, BaseParams
+from serial import Serial
+
 from .response import Response
 
 BROADCAST_ID = 0xFE
@@ -84,7 +86,7 @@ def calc_crc_16(packet: List[int]) -> int:
     return crc
 
 
-class Params(BaseParams):
+class Params:
     def __init__(self, params=None) -> None:
         if params is None:
             params = []
@@ -129,8 +131,20 @@ class Params(BaseParams):
         return bytes(self.params)
 
 
+def add_stuffing(params: Params) -> Params:
+    buffer = list(params.raw)
+    indices = [
+        i + 3 for i in range(len(buffer) - 2) if buffer[i : i + 3] == [0xFF, 0xFF, 0xFD]
+    ]
+
+    for i in reversed(indices):
+        buffer.insert(i, 0xFD)
+
+    return Params(buffer)
+
+
 @dataclass(frozen=True)
-class InstructionPacket(BasePacket):
+class InstructionPacket:
     packet_id: int
     instruction: int
     params: Params = field(default_factory=Params)
@@ -161,25 +175,13 @@ class InstructionPacket(BasePacket):
         packet.append(self.packet_id)
         packet.extend(split_bytes(self.length))
         packet.append(self.instruction)
-        packet.extend(self.params.raw)
+        params = add_stuffing(self.params)
+        packet.extend(params.raw)
         object.__setattr__(self, "crc", calc_crc_16(packet))
-
-    def add_stuffing(self) -> None:
-        params = list(self.params.raw)
-        indices = [
-            i + 3
-            for i in range(len(params) - 2)
-            if params[i : i + 3] == [0xFF, 0xFF, 0xFD]
-        ]
-
-        for i in reversed(indices):
-            params.insert(i, 0xFD)
-
-        object.__setattr__(self, "params", Params(params))
 
 
 @dataclass
-class StatusPacket(BasePacket):
+class StatusPacket:
     header: Tuple[int, int, int, int]
     packet_id: int
     length: int
@@ -241,14 +243,52 @@ class HardwareError(Exception):
         super().__init__(message)
 
 
-class Connection(BaseConnection):
-    def read_packet(self) -> Optional[StatusPacket]:
-        packet = self.read_header([0xFF, 0xFF, 0xFD, 0x00])
+class Connection:
+    def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
+        self.serial = Serial(baudrate=baudrate, timeout=timeout, write_timeout=timeout)
 
-        if len(packet) < 4:
+        self.serial.port = port
+
+    def open(self) -> None:
+        self.serial.open()
+
+    def close(self) -> None:
+        self.serial.close()
+
+    def set_baudrate(self, baudrate) -> None:
+        self.serial.baudrate = baudrate
+
+    def read_header(self, header):
+        length = len(header)
+        packet = []
+        header_found = False
+        t0 = time.time()
+        while not header_found:
+            packet.extend(list(self.serial.read(length - len(packet))))
+
+            for _ in range(len(packet)):
+                if packet[:length] == header:
+                    header_found = True
+                    break
+
+                packet.pop(0)
+
+            if self.serial.timeout is not None and time.time() - t0 >= (
+                self.serial.timeout * length
+            ):
+                break
+
+        return packet
+
+    def read_packet(self) -> Optional[StatusPacket]:
+        header = [0xFF, 0xFF, 0xFD, 0x00]
+
+        packet = self.read_header(header)
+
+        if len(packet) < len(header):
             return None
 
-        buffer = list(self.read(3))
+        buffer = list(self.serial.read(3))
         packet.extend(buffer)
 
         if len(buffer) < 3:
@@ -257,7 +297,7 @@ class Connection(BaseConnection):
         packet_id, length_l, length_h = buffer
         length = merge_bytes([length_l, length_h])
 
-        rest = list(self.read(length))
+        rest = list(self.serial.read(length))
         packet.extend(rest)
 
         if len(rest) < length:
@@ -270,13 +310,21 @@ class Connection(BaseConnection):
 
         return rx
 
+    def stream_packets(self, count=None):
+        if count is None:
+            while True:
+                yield self.read_packet()
+
+        else:
+            for _ in range(count):
+                yield self.read_packet()
+
     def write_packet(self, tx: InstructionPacket) -> None:
-        tx.add_stuffing()
         buffer = tx.raw
 
         count = 0
         while count < len(buffer):
-            count = self.write(buffer)
+            count = self.serial.write(buffer)
 
 
 class SyncType(Enum):
@@ -359,9 +407,9 @@ class BulkParams(Params):
         self.num_motors += 1
 
 
-class MotorBus(BaseBus):
-    def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
-        self.conn = Connection(port, baudrate, timeout)
+class MotorBus:
+    def __init__(self, port, baudrate=1_000_000, timeout: float = 0.1):
+        self.conn = Connection(port, baudrate, timeout=timeout)
 
     def connect(self):
         self.conn.open()
@@ -370,7 +418,7 @@ class MotorBus(BaseBus):
         self.conn.close()
 
     def set_baudrate(self, baudrate):
-        self.conn.baudrate = baudrate
+        self.conn.set_baudrate = baudrate
 
     def ping(self, dxl_id) -> Response:
         tx = InstructionPacket(dxl_id, PING)
@@ -384,7 +432,7 @@ class MotorBus(BaseBus):
         r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r = replace(r, data=r.data.parse_ping())
+            r.data = r.data.parse_ping()
 
         return r
 
@@ -392,14 +440,14 @@ class MotorBus(BaseBus):
         tx = InstructionPacket(BROADCAST_ID, PING)
         self.conn.write_packet(tx)
 
-        r = Response()
+        r = None
 
         data = {}
         for rx in self.conn.stream_packets():
             if rx is None:
                 break
 
-            r = replace(r, error=rx.error, valid=rx.valid)
+            r = Response(error=rx.error, valid=rx.valid)
 
             if r.ok:
                 if rx is not None and rx.valid:
@@ -407,10 +455,12 @@ class MotorBus(BaseBus):
 
                 data.update({rx.packet_id: rx.params.parse_ping()})
             else:
-                self.conn.reset_input_buffer()
                 break
 
-        r = replace(r, data=data)
+        if r is None:
+            return Response(timeout=True)
+
+        r.data = data
         return r
 
     def read(self, dxl_id, address, length):
@@ -429,7 +479,7 @@ class MotorBus(BaseBus):
         r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r = replace(r, data=r.data.parse_bytes())
+            r.data = r.data.parse_bytes()
 
         return r
 
@@ -506,7 +556,7 @@ class MotorBus(BaseBus):
             if r.ok and r.data is not None:
                 data.append(r.data.parse_bytes())
 
-        r = replace(r, data=data)
+        r.data = data
         return r
 
     def sync_read(self, params: SyncParams):
@@ -533,9 +583,7 @@ class MotorBus(BaseBus):
         r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r = replace(
-                r, data=r.data.parse_nested([params.length] * params.num_motors)
-            )
+            r.data = r.data.parse_nested([params.length] * params.num_motors)
 
         return r
 
@@ -568,6 +616,6 @@ class MotorBus(BaseBus):
         r = Response.from_rx(rx)
 
         if r.ok and r.data is not None:
-            r = replace(r, data=r.data.parse_nested(params.lengths))
+            r.data = r.data.parse_nested(params.lengths)
 
         return r

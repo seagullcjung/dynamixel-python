@@ -52,8 +52,11 @@ def build_rx(packet_id=ID, error=ERROR, params=PARAMS):
 
 @pytest.fixture
 def conn(mock_serial):
-    with Connection(mock_serial.port, timeout=TIMEOUT) as conn:
-        yield conn
+    conn = Connection(mock_serial.port, timeout=TIMEOUT)
+
+    conn.open()
+    yield conn
+    conn.close()
 
 
 def test_v1_read_packet(mock_serial, conn):
@@ -164,8 +167,10 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
 @pytest.fixture
 def bus(mock_serial):
-    with MotorBus(mock_serial.port, timeout=TIMEOUT) as bus:
-        yield bus
+    bus = MotorBus(mock_serial.port, timeout=TIMEOUT)
+    bus.connect()
+    yield bus
+    bus.disconnect()
 
 
 def test_v1_ping(mock_serial, bus):
@@ -231,7 +236,9 @@ def test_v1_action(mock_serial, bus):
 
     bus.action()
 
-    assert bus.conn.read() == b"x"
+    serial = Serial(mock_serial.port)
+
+    assert serial.read() == b"x"
 
     assert stub.called
     assert stub.calls == 1
