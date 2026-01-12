@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-@dataclass(frozen=True)
+@dataclass
 class Response:
     timeout: bool = False
     error: Optional[int] = None

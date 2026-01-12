@@ -52,16 +52,18 @@ def build_rx(packet_id=ID, error=ERROR, params=PARAMS):
 
 @pytest.fixture
 def conn(mock_serial):
-    with Connection(mock_serial.port, timeout=TIMEOUT) as conn:
-        yield conn
+    conn = Connection(mock_serial.port, timeout=TIMEOUT)
+
+    conn.open()
+    yield conn
+    conn.close()
 
 
 def test_v1_read_packet(mock_serial, conn):
     rx = build_rx(error=0x01, params=[0xFF, 0xFF, 0xFD, 0xFD])
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -82,8 +84,7 @@ def test_v1_read_packet_with_residue(mock_serial, conn):
     rx = [0x00] * 16 + rx
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -119,8 +120,7 @@ def test_v1_read_packet_rest_timeout(mock_serial, conn):
     rx = rx[:3]
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -134,8 +134,7 @@ def test_v1_read_packet_no_header(mock_serial, conn):
     rx = []
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -151,8 +150,7 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -164,8 +162,10 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
 @pytest.fixture
 def bus(mock_serial):
-    with MotorBus(mock_serial.port, timeout=TIMEOUT) as bus:
-        yield bus
+    bus = MotorBus(mock_serial.port, timeout=TIMEOUT)
+    bus.connect()
+    yield bus
+    bus.disconnect()
 
 
 def test_v1_ping(mock_serial, bus):
@@ -231,7 +231,7 @@ def test_v1_action(mock_serial, bus):
 
     bus.action()
 
-    assert bus.conn.read() == b"x"
+    assert bus.conn.serial.read() == b"x"
 
     assert stub.called
     assert stub.calls == 1
