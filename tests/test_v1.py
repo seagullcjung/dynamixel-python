@@ -63,8 +63,7 @@ def test_v1_read_packet(mock_serial, conn):
     rx = build_rx(error=0x01, params=[0xFF, 0xFF, 0xFD, 0xFD])
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -85,8 +84,7 @@ def test_v1_read_packet_with_residue(mock_serial, conn):
     rx = [0x00] * 16 + rx
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -122,8 +120,7 @@ def test_v1_read_packet_rest_timeout(mock_serial, conn):
     rx = rx[:3]
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -137,8 +134,7 @@ def test_v1_read_packet_no_header(mock_serial, conn):
     rx = []
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -154,8 +150,7 @@ def test_v1_read_packet_timeout(mock_serial, conn):
 
     stub = mock_serial.stub(receive_bytes=b"x", send_bytes=bytes(rx))
 
-    serial = Serial(mock_serial.port, timeout=TIMEOUT)
-    serial.write(b"x")
+    conn.serial.write(b"x")
 
     rx = conn.read_packet()
 
@@ -236,9 +231,7 @@ def test_v1_action(mock_serial, bus):
 
     bus.action()
 
-    serial = Serial(mock_serial.port)
-
-    assert serial.read() == b"x"
+    assert bus.conn.serial.read() == b"x"
 
     assert stub.called
     assert stub.calls == 1
