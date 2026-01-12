@@ -7,7 +7,7 @@
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 from serial import Serial
 
@@ -87,7 +87,7 @@ def calc_crc_16(packet: List[int]) -> int:
 
 
 class Params:
-    def __init__(self, params=None) -> None:
+    def __init__(self, params: Optional[List[int]] = None) -> None:
         if params is None:
             params = []
 
@@ -190,10 +190,8 @@ class StatusPacket:
     params: Params
     crc: int
 
-    def __init__(self, buffer) -> None:
-        buffer = list(buffer)
-
-        self.header = tuple(buffer[:4])
+    def __init__(self, buffer: List[int]) -> None:
+        self.header = (buffer[0], buffer[1], buffer[2], buffer[3])
         self.packet_id = buffer[4]
         self.length = merge_bytes(buffer[5:7])
         self.instruction, self.error = buffer[7:9]
@@ -237,7 +235,9 @@ class HardwareError(Exception):
 
 
 class Connection:
-    def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
+    def __init__(
+        self, port: str, baudrate: int = 1_000_000, timeout: float = 1
+    ) -> None:
         self.serial = Serial(baudrate=baudrate, timeout=timeout, write_timeout=timeout)
 
         self.serial.port = port
@@ -248,10 +248,10 @@ class Connection:
     def close(self) -> None:
         self.serial.close()
 
-    def set_baudrate(self, baudrate) -> None:
+    def set_baudrate(self, baudrate: int) -> None:
         self.serial.baudrate = baudrate
 
-    def read_header(self):
+    def read_header(self) -> List[int]:
         header = [0xFF, 0xFF, 0xFD, 0x00]
 
         length = len(header)
@@ -300,14 +300,16 @@ class Connection:
 
         if rx.error & 0x80:
             msg = (
-                f"Alert! There is a hardware issue with device id: {rx.packet_id}. ",
+                f"Alert! There is a hardware issue with device id: {packet_id}. ",
                 "Check the hardware error status value of the control table.",
             )
             raise HardwareError(msg)
 
         return rx
 
-    def stream_packets(self, count=None):
+    def stream_packets(
+        self, count: Optional[int] = None
+    ) -> Generator[Optional[StatusPacket], None, None]:
         if count is None:
             while True:
                 yield self.read_packet()
@@ -330,7 +332,7 @@ class SyncType(Enum):
 
 
 class SyncParams(Params):
-    def __init__(self, address, length) -> None:
+    def __init__(self, address: int, length: int) -> None:
         super().__init__()
         self.add(address, 2)
         self.add(length, 2)
@@ -340,7 +342,7 @@ class SyncParams(Params):
 
         self.type = None
 
-    def add_motor(self, dxl_id) -> None:
+    def add_motor(self, dxl_id: int) -> None:
         if self.type is None:
             self.type = SyncType.READ
         else:
@@ -349,7 +351,7 @@ class SyncParams(Params):
         self.add(dxl_id)
         self.num_motors += 1
 
-    def add_value(self, dxl_id, value):
+    def add_value(self, dxl_id: int, value: int) -> None:
         if self.type is None:
             self.type = SyncType.WRITE
         else:
@@ -367,7 +369,7 @@ class BulkType(Enum):
 
 
 class BulkParams(Params):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         self.num_motors = 0
@@ -375,7 +377,7 @@ class BulkParams(Params):
 
         self.lengths = []
 
-    def add_address(self, dxl_id, address, length):
+    def add_address(self, dxl_id: int, address: int, length: int) -> None:
         if self.type is None:
             self.type = BulkType.READ
         else:
@@ -388,7 +390,7 @@ class BulkParams(Params):
         self.num_motors += 1
         self.lengths.append(length)
 
-    def add_value(self, dxl_id, address, length, value):
+    def add_value(self, dxl_id: int, address: int, length: int, value: int) -> None:
         if self.type is None:
             self.type = BulkType.WRITE
         else:
@@ -405,35 +407,39 @@ class BulkParams(Params):
 
 
 class MotorBus:
-    def __init__(self, port, baudrate=1_000_000, timeout: float = 0.1):
+    def __init__(
+        self, port: str, baudrate: int = 1_000_000, timeout: float = 0.1
+    ) -> None:
         self.conn = Connection(port, baudrate, timeout=timeout)
 
-    def connect(self):
+    def connect(self) -> None:
         self.conn.open()
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.conn.close()
 
-    def set_baudrate(self, baudrate):
-        self.conn.set_baudrate = baudrate
+    def set_baudrate(self, baudrate: int) -> None:
+        self.conn.set_baudrate(baudrate)
 
-    def ping(self, dxl_id) -> Response:
+    def ping(self, dxl_id: int) -> Response:
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
 
         rx = self.conn.read_packet()
 
-        if rx is not None and rx.valid:
+        if rx is None:
+            return Response(timeout=True)
+
+        if not rx.valid or rx.error:
+            return Response(error=rx.error, valid=rx.valid)
+
+        if rx.valid:
             rx.remove_stuffing()
 
-        r = Response.from_rx(rx)
+        data = rx.params.parse_ping()
+        return Response(error=0, valid=True, data=data)
 
-        if r.ok and r.data is not None:
-            r.data = r.data.parse_ping()
-
-        return r
-
-    def broadcast_ping(self):
+    def broadcast_ping(self) -> Response:
         tx = InstructionPacket(BROADCAST_ID, PING)
         self.conn.write_packet(tx)
 
@@ -447,7 +453,10 @@ class MotorBus:
             r = Response(error=rx.error, valid=rx.valid)
 
             if r.ok:
-                if rx is not None and rx.valid:
+                if not rx.valid or rx.error:
+                    return Response(error=rx.error, valid=rx.valid)
+
+                if rx.valid:
                     rx.remove_stuffing()
 
                 data.update({rx.packet_id: rx.params.parse_ping()})
@@ -460,7 +469,7 @@ class MotorBus:
         r.data = data
         return r
 
-    def read(self, dxl_id, address, length):
+    def read(self, dxl_id: int, address: int, length: int) -> Response:
         params = Params()
         params.add(address, 2)
         params.add(length, 2)
@@ -470,17 +479,21 @@ class MotorBus:
 
         rx = self.conn.read_packet()
 
-        if rx is not None and rx.valid:
+        if rx is None:
+            return Response(timeout=True)
+
+        if not rx.valid or rx.error:
+            return Response(error=rx.error, valid=rx.valid)
+
+        if rx.valid:
             rx.remove_stuffing()
 
-        r = Response.from_rx(rx)
+        data = rx.params.parse_bytes()
+        return Response(error=0, valid=True, data=data)
 
-        if r.ok and r.data is not None:
-            r.data = r.data.parse_bytes()
-
-        return r
-
-    def _write(self, dxl_id, instruction, address, length, value):
+    def _write(
+        self, dxl_id: int, instruction: int, address: int, length: int, value: int
+    ) -> Response:
         params = Params()
         params.add(address, 2)
         params.add(value, length)
@@ -490,86 +503,103 @@ class MotorBus:
 
         rx = self.conn.read_packet()
 
-        return Response.from_rx(rx)
+        if rx is None:
+            return Response(timeout=True)
 
-    def write(self, dxl_id, address, length, value):
+        return Response(error=rx.error, valid=rx.valid, data=[])
+
+    def write(self, dxl_id: int, address: int, length: int, value: int) -> Response:
         return self._write(dxl_id, WRITE, address, length, value)
 
-    def reg_write(self, dxl_id, address, length, value):
+    def reg_write(self, dxl_id: int, address: int, length: int, value: int) -> Response:
         return self._write(dxl_id, REG_WRITE, address, length, value)
 
-    def _send(self, dxl_id, instruction, params=None):
-        if params is None:
-            params = []
+    def _send(
+        self, dxl_id: int, instruction: int, buffer: Optional[List[int]] = None
+    ) -> Response:
+        if buffer is None:
+            buffer = []
 
-        params = Params(params)
+        params = Params(buffer)
 
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
 
         rx = self.conn.read_packet()
 
-        return Response.from_rx(rx)
+        if rx is None:
+            return Response(timeout=True)
 
-    def action(self, dxl_id):
+        if not rx.valid or rx.error:
+            return Response(error=rx.error, valid=rx.valid)
+
+        if rx.valid:
+            rx.remove_stuffing()
+
+        return Response(error=rx.error, valid=rx.valid, data=[])
+
+    def action(self, dxl_id: int) -> Response:
         return self._send(dxl_id, ACTION)
 
-    def factory_reset(self, dxl_id):
+    def factory_reset(self, dxl_id: int) -> Response:
         return self._send(dxl_id, FACTORY_RESET, [0xFF])
 
-    def factory_reset_except_id(self, dxl_id):
+    def factory_reset_except_id(self, dxl_id: int) -> Response:
         return self._send(dxl_id, FACTORY_RESET, [0x01])
 
-    def factory_reset_except_id_baudrate(self, dxl_id):
+    def factory_reset_except_id_baudrate(self, dxl_id: int) -> Response:
         return self._send(dxl_id, FACTORY_RESET, [0x02])
 
-    def reboot(self, dxl_id):
+    def reboot(self, dxl_id: int) -> Response:
         return self._send(dxl_id, REBOOT)
 
-    def clear_position(self, dxl_id):
+    def clear_position(self, dxl_id: int) -> Response:
         return self._send(dxl_id, CLEAR, [0x01, 0x44, 0x58, 0x4C, 0x22])
 
-    def clear_errors(self, dxl_id):
+    def clear_errors(self, dxl_id: int) -> Response:
         return self._send(dxl_id, CLEAR, [0x02, 0x45, 0x52, 0x43, 0x4C])
 
-    def control_table_backup(self, dxl_id):
+    def control_table_backup(self, dxl_id: int) -> Response:
         return self._send(dxl_id, CONTROL_TABLE_BACKUP, [0x01, 0x43, 0x54, 0x52, 0x4C])
 
-    def control_table_restore(self, dxl_id):
+    def control_table_restore(self, dxl_id: int) -> Response:
         return self._send(dxl_id, CONTROL_TABLE_BACKUP, [0x02, 0x43, 0x54, 0x52, 0x4C])
 
-    def _sync_read(self, tx, count):
+    def _sync_read(self, tx: InstructionPacket, count: int) -> Response:
         self.conn.write_packet(tx)
-
-        r = Response(timeout=True)
 
         data = []
         for rx in self.conn.stream_packets(count=count):
-            if rx is not None and rx.valid:
+            if rx is None:
+                return Response(timeout=True)
+
+            if not rx.valid or rx.error != 0:
+                return Response(error=rx.error, valid=rx.valid)
+
+            if rx.valid:
                 rx.remove_stuffing()
 
-            r = Response.from_rx(rx)
+            data.append(rx.params.parse_bytes())
 
-            if r.ok and r.data is not None:
-                data.append(r.data.parse_bytes())
+        if len(data) == 0:
+            return Response(timeout=True)
 
-        r.data = data
-        return r
+        return Response(error=0, valid=True, data=data)
 
-    def sync_read(self, params: SyncParams):
+    def sync_read(self, params: SyncParams) -> Response:
         assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_READ, params)
 
         return self._sync_read(tx, params.num_motors)
 
-    def sync_write(self, params: SyncParams):
+    def sync_write(self, params: SyncParams) -> None:
         assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
-    def fast_sync_read(self, params: SyncParams):
+    def fast_sync_read(self, params: SyncParams) -> Response:
         assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, FAST_SYNC_READ, params)
@@ -577,14 +607,19 @@ class MotorBus:
 
         rx = self.conn.read_packet()
 
-        r = Response.from_rx(rx)
+        if rx is None:
+            return Response(timeout=True)
 
-        if r.ok and r.data is not None:
-            r.data = r.data.parse_nested([params.length] * params.num_motors)
+        if not rx.valid or rx.error != 0:
+            return Response(error=rx.error, valid=rx.valid)
 
-        return r
+        if rx.valid:
+            rx.remove_stuffing()
 
-    def bulk_read(self, params: BulkParams):
+        data = rx.params.parse_nested([params.length] * params.num_motors)
+        return Response(error=0, valid=True, data=data)
+
+    def bulk_read(self, params: BulkParams) -> Response:
         assert params.num_motors > 0 and params.type == BulkType.READ, (
             "You need to add addresses with BulkParams.ad_address"
         )
@@ -592,7 +627,7 @@ class MotorBus:
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
         return self._sync_read(tx, params.num_motors)
 
-    def bulk_write(self, params: BulkParams):
+    def bulk_write(self, params: BulkParams) -> None:
         assert params.num_motors > 0 and params.type == BulkType.WRITE, (
             "You need to add values with BulkParams.add_value"
         )
@@ -600,7 +635,7 @@ class MotorBus:
         tx = InstructionPacket(BROADCAST_ID, BULK_WRITE, params)
         self.conn.write_packet(tx)
 
-    def fast_bulk_read(self, params: BulkParams):
+    def fast_bulk_read(self, params: BulkParams) -> Response:
         assert params.num_motors > 0 and params.type == BulkType.READ, (
             "You need to add addresses with BulkParams.ad_address"
         )
@@ -610,9 +645,14 @@ class MotorBus:
 
         rx = self.conn.read_packet()
 
-        r = Response.from_rx(rx)
+        if rx is None:
+            return Response(timeout=True)
 
-        if r.ok and r.data is not None:
-            r.data = r.data.parse_nested(params.lengths)
+        if not rx.valid or rx.error != 0:
+            return Response(error=rx.error, valid=rx.valid)
 
-        return r
+        if rx.valid:
+            rx.remove_stuffing()
+
+        data = rx.params.parse_nested(params.lengths)
+        return Response(error=0, valid=True, data=data)
