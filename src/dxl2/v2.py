@@ -235,8 +235,6 @@ class StatusPacket:
 class HardwareError(Exception):
     """Hardware error."""
 
-    pass
-
 
 class Connection:
     def __init__(self, port, baudrate=1_000_000, timeout: float = 1):
