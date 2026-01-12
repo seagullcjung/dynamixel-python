@@ -5,7 +5,7 @@ from dxl2.v2 import (
     BulkParams,
     Connection,
     HardwareError,
-    MotorDriver,
+    MotorBus,
     SyncParams,
     calc_crc_16,
     split_bytes,
@@ -196,18 +196,18 @@ def test_v2_read_packet_raises(mock_serial, conn):
 
 
 @pytest.fixture
-def driver(mock_serial):
-    with MotorDriver(mock_serial.port, timeout=TIMEOUT) as driver:
-        yield driver
+def bus(mock_serial):
+    with MotorBus(mock_serial.port, timeout=TIMEOUT) as bus:
+        yield bus
 
 
-def test_v2_ping(mock_serial, driver):
+def test_v2_ping(mock_serial, bus):
     tx = build_tx(instruction=PING, params=[])
     rx = build_rx(params=[0x06, 0x04, 0x26])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.ping(ID)
+    r = bus.ping(ID)
 
     assert r.ok
     assert r.data == {"model_number": 1030, "firmware_version": 38}
@@ -216,7 +216,7 @@ def test_v2_ping(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_broadcast_ping(mock_serial, driver):
+def test_v2_broadcast_ping(mock_serial, bus):
     tx = build_tx(BROADCAST_ID, PING, params=[])
 
     rx_1 = build_rx(packet_id=0x01, params=[0x06, 0x04, 0x26])
@@ -224,7 +224,7 @@ def test_v2_broadcast_ping(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx_1 + rx_2))
 
-    r = driver.broadcast_ping()
+    r = bus.broadcast_ping()
 
     assert r.ok
     assert r.data == {
@@ -236,13 +236,13 @@ def test_v2_broadcast_ping(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_read(mock_serial, driver):
+def test_v2_read(mock_serial, bus):
     tx = build_tx(instruction=READ, params=[0x84, 0x01, 0x04, 0x00])
     rx = build_rx(params=[0xA6, 0x01, 0x01, 0x01])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.read(ID, 0x0184, 4)
+    r = bus.read(ID, 0x0184, 4)
 
     assert r.ok
     assert r.data == 0x010101A6
@@ -251,124 +251,124 @@ def test_v2_read(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_write(mock_serial, driver):
+def test_v2_write(mock_serial, bus):
     tx = build_tx(instruction=WRITE, params=[0x74, 0x01, 0x04, 0x01, 0x01, 0x01])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.write(ID, 0x0174, 4, 0x01010104)
+    r = bus.write(ID, 0x0174, 4, 0x01010104)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_reg_write(mock_serial, driver):
+def test_v2_reg_write(mock_serial, bus):
     tx = build_tx(instruction=REG_WRITE, params=[0x68, 0x01, 0xC8, 0x00, 0x00, 0x01])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.reg_write(ID, 0x0168, 4, 0x010000C8)
+    r = bus.reg_write(ID, 0x0168, 4, 0x010000C8)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_action(mock_serial, driver):
+def test_v2_action(mock_serial, bus):
     tx = build_tx(instruction=ACTION, params=[])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.action(ID)
+    r = bus.action(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_factory_reset(mock_serial, driver):
+def test_v2_factory_reset(mock_serial, bus):
     tx = build_tx(instruction=FACTORY_RESET, params=[0xFF])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.factory_reset(ID)
+    r = bus.factory_reset(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_factory_reset_except_id(mock_serial, driver):
+def test_v2_factory_reset_except_id(mock_serial, bus):
     tx = build_tx(instruction=FACTORY_RESET, params=[0x01])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.factory_reset_except_id(ID)
+    r = bus.factory_reset_except_id(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_factory_reset_except_id_baudrate(mock_serial, driver):
+def test_v2_factory_reset_except_id_baudrate(mock_serial, bus):
     tx = build_tx(instruction=FACTORY_RESET, params=[0x02])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.factory_reset_except_id_baudrate(ID)
+    r = bus.factory_reset_except_id_baudrate(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_reboot(mock_serial, driver):
+def test_v2_reboot(mock_serial, bus):
     tx = build_tx(instruction=REBOOT, params=[])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.reboot(ID)
+    r = bus.reboot(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_clear_position(mock_serial, driver):
+def test_v2_clear_position(mock_serial, bus):
     tx = build_tx(instruction=CLEAR, params=[0x01, 0x44, 0x58, 0x4C, 0x22])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.clear_position(ID)
+    r = bus.clear_position(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_clear_errors(mock_serial, driver):
+def test_v2_clear_errors(mock_serial, bus):
     tx = build_tx(instruction=CLEAR, params=[0x02, 0x45, 0x52, 0x43, 0x4C])
     rx = build_rx(params=[])
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.clear_errors(ID)
+    r = bus.clear_errors(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_control_table_backup(mock_serial, driver):
+def test_v2_control_table_backup(mock_serial, bus):
     tx = build_tx(
         instruction=CONTROL_TABLE_BACKUP, params=[0x01, 0x43, 0x54, 0x52, 0x4C]
     )
@@ -376,14 +376,14 @@ def test_v2_control_table_backup(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.control_table_backup(ID)
+    r = bus.control_table_backup(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_control_table_restore(mock_serial, driver):
+def test_v2_control_table_restore(mock_serial, bus):
     tx = build_tx(
         instruction=CONTROL_TABLE_BACKUP, params=[0x02, 0x43, 0x54, 0x52, 0x4C]
     )
@@ -391,14 +391,14 @@ def test_v2_control_table_restore(mock_serial, driver):
 
     stub = mock_serial.stub(receive_bytes=bytes(tx), send_bytes=bytes(rx))
 
-    r = driver.control_table_restore(ID)
+    r = bus.control_table_restore(ID)
     assert r.ok
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_sync_read(mock_serial, driver):
+def test_v2_sync_read(mock_serial, bus):
     tx = build_tx(BROADCAST_ID, SYNC_READ, params=[0x84, 0x01, 0x04, 0x00, 0x01, 0x02])
 
     rx_1 = build_rx(params=[0xA6, 0x01, 0x01, 0x01])
@@ -410,7 +410,7 @@ def test_v2_sync_read(mock_serial, driver):
     params.add_motor(ID)
     params.add_motor(ID + 1)
 
-    r = driver.sync_read(params)
+    r = bus.sync_read(params)
 
     assert r.ok
     assert r.data == [0x010101A6, 0x010101B6]
@@ -419,7 +419,7 @@ def test_v2_sync_read(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_sync_read_partial(mock_serial, driver):
+def test_v2_sync_read_partial(mock_serial, bus):
     tx = build_tx(BROADCAST_ID, SYNC_READ, params=[0x84, 0x01, 0x04, 0x00, 0x01, 0x02])
 
     rx_1 = build_rx(params=[0xA6, 0x01, 0x01, 0x01])
@@ -431,7 +431,7 @@ def test_v2_sync_read_partial(mock_serial, driver):
     params.add_motor(ID)
     params.add_motor(ID + 1)
 
-    r = driver.sync_read(params)
+    r = bus.sync_read(params)
 
     assert not r.ok
 
@@ -439,7 +439,7 @@ def test_v2_sync_read_partial(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_sync_write(mock_serial, driver):
+def test_v2_sync_write(mock_serial, bus):
     params = [0x74, 0x01]
     params.extend([0x04, 0x00])
 
@@ -457,15 +457,15 @@ def test_v2_sync_write(mock_serial, driver):
     params.add_value(1, 0x01010196)
     params.add_value(2, 0x01210136)
 
-    driver.sync_write(params)
+    bus.sync_write(params)
 
-    assert driver.conn.read() == b"x"
+    assert bus.conn.read() == b"x"
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_fast_sync_read(mock_serial, driver):
+def test_v2_fast_sync_read(mock_serial, bus):
     params = [0x84, 0x01]
     params.extend([0x04, 0x00])
     params.extend([0x01, 0x02, 0x03])
@@ -494,7 +494,7 @@ def test_v2_fast_sync_read(mock_serial, driver):
     params.add_motor(2)
     params.add_motor(3)
 
-    r = driver.fast_sync_read(params)
+    r = bus.fast_sync_read(params)
 
     assert r.ok
     assert r.data == [0x28937423, 0x27933423, 0x17933423]
@@ -503,7 +503,7 @@ def test_v2_fast_sync_read(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_fast_sync_read_single(mock_serial, driver):
+def test_v2_fast_sync_read_single(mock_serial, bus):
     params = [0x84, 0x01]
     params.extend([0x04, 0x00])
     params.extend([0x01])
@@ -520,7 +520,7 @@ def test_v2_fast_sync_read_single(mock_serial, driver):
     params = SyncParams(0x0184, 4)
     params.add_motor(1)
 
-    r = driver.fast_sync_read(params)
+    r = bus.fast_sync_read(params)
 
     assert r.ok
     assert r.data == [0x28937423]
@@ -529,7 +529,7 @@ def test_v2_fast_sync_read_single(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_bulk_read(mock_serial, driver):
+def test_v2_bulk_read(mock_serial, bus):
     params = []
 
     params.append(0x01)
@@ -559,7 +559,7 @@ def test_v2_bulk_read(mock_serial, driver):
     params.add_address(2, 0x0114, 2)
     params.add_address(3, 0x0110, 1)
 
-    r = driver.bulk_read(params)
+    r = bus.bulk_read(params)
 
     assert r.ok
     assert r.data == [0x34832902, 0x8329, 0x39]
@@ -568,7 +568,7 @@ def test_v2_bulk_read(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_bulk_read_partial(mock_serial, driver):
+def test_v2_bulk_read_partial(mock_serial, bus):
     params = []
 
     params.append(0x01)
@@ -598,7 +598,7 @@ def test_v2_bulk_read_partial(mock_serial, driver):
     params.add_address(2, 0x0114, 2)
     params.add_address(3, 0x0110, 1)
 
-    r = driver.bulk_read(params)
+    r = bus.bulk_read(params)
 
     assert not r.ok
 
@@ -606,7 +606,7 @@ def test_v2_bulk_read_partial(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_bulk_write(mock_serial, driver):
+def test_v2_bulk_write(mock_serial, bus):
     params = []
 
     params.append(0x01)
@@ -633,15 +633,15 @@ def test_v2_bulk_write(mock_serial, driver):
     params.add_value(2, 0x0114, 2, 0x8329)
     params.add_value(3, 0x0110, 1, 0x39)
 
-    driver.bulk_write(params)
+    bus.bulk_write(params)
 
-    assert driver.conn.read() == b"x"
+    assert bus.conn.read() == b"x"
 
     assert stub.called
     assert stub.calls == 1
 
 
-def test_v2_fast_bulk_read(mock_serial, driver):
+def test_v2_fast_bulk_read(mock_serial, bus):
     params = []
 
     params.append(0x01)
@@ -680,7 +680,7 @@ def test_v2_fast_bulk_read(mock_serial, driver):
     params.add_address(2, 0x0114, 2)
     params.add_address(3, 0x0110, 1)
 
-    r = driver.fast_bulk_read(params)
+    r = bus.fast_bulk_read(params)
 
     assert r.ok
     assert r.data == [0x28937423, 0x2933, 0x13]
@@ -689,7 +689,7 @@ def test_v2_fast_bulk_read(mock_serial, driver):
     assert stub.calls == 1
 
 
-def test_v2_fast_bulk_read_single(mock_serial, driver):
+def test_v2_fast_bulk_read_single(mock_serial, bus):
     params = []
 
     params.append(0x01)
@@ -708,7 +708,7 @@ def test_v2_fast_bulk_read_single(mock_serial, driver):
     params = BulkParams()
     params.add_address(1, 0x0124, 4)
 
-    r = driver.fast_bulk_read(params)
+    r = bus.fast_bulk_read(params)
 
     assert r.ok
     assert r.data == [0x28937423]
