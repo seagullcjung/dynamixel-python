@@ -235,12 +235,7 @@ class StatusPacket:
 class HardwareError(Exception):
     """Hardware error."""
 
-    def __init__(self, dxl_id):
-        message = (
-            f"Alert! There is a hardware issue with device id: {dxl_id}. ",
-            "Check the hardware error status value of the control table.",
-        )
-        super().__init__(message)
+    pass
 
 
 class Connection:
@@ -306,7 +301,11 @@ class Connection:
         rx = StatusPacket(packet)
 
         if rx.error & 0x80:
-            raise HardwareError(packet_id)
+            msg = (
+                f"Alert! There is a hardware issue with device id: {rx.packet_id}. ",
+                "Check the hardware error status value of the control table.",
+            )
+            raise HardwareError(msg)
 
         return rx
 
