@@ -200,7 +200,7 @@ class StatusPacket:
 
     @property
     def raw(self) -> bytes:
-        packet = []
+        packet: List[int] = []
         packet.extend(self.header)
         packet.append(self.packet_id)
         packet.extend(split_bytes(self.length))
@@ -255,7 +255,7 @@ class Connection:
         header = [0xFF, 0xFF, 0xFD, 0x00]
 
         length = len(header)
-        packet = []
+        packet: List[int] = []
         header_found = False
         t0 = time.time()
         while not header_found:
@@ -340,7 +340,7 @@ class SyncParams(Params):
         self.length = length
         self.num_motors = 0
 
-        self.type = None
+        self.type: Optional[SyncType] = None
 
     def add_motor(self, dxl_id: int) -> None:
         if self.type is None:
@@ -373,9 +373,9 @@ class BulkParams(Params):
         super().__init__()
 
         self.num_motors = 0
-        self.type = None
+        self.type: Optional[BulkType] = None
 
-        self.lengths = []
+        self.lengths: List[int] = []
 
     def add_address(self, dxl_id: int, address: int, length: int) -> None:
         if self.type is None:

@@ -112,7 +112,7 @@ class StatusPacket:
 
     @property
     def raw(self) -> bytes:
-        packet = []
+        packet: List[int] = []
         packet.extend(self.header)
         packet.append(self.packet_id)
         packet.append(self.length)
@@ -147,7 +147,7 @@ class Connection:
         header = [0xFF, 0xFF]
 
         length = len(header)
-        packet = []
+        packet: List[int] = []
         header_found = False
         t0 = time.time()
         while not header_found:

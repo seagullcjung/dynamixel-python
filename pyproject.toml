@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-mock", "mock-serial ; sys_platform != 'win32'"]
+test = ["pytest", "pytest-mock", "mock-serial ; sys_platform != 'win32'", "mypy"]
 
 [tool.setuptools]
 packages = [
