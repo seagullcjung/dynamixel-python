@@ -593,6 +593,7 @@ class MotorBus:
         return self._send(dxl_id, ACTION)
 
     def factory_reset(self, dxl_id: int) -> Response:
+        assert dxl_id != BROADCAST_ID
         return self._send(dxl_id, FACTORY_RESET, [0xFF])
 
     def factory_reset_except_id(self, dxl_id: int) -> Response:
@@ -639,12 +640,14 @@ class MotorBus:
 
         return Response(error=0, valid=True, data=data)
 
-    def sync_read(self, params: SyncParams, signed: bool = False) -> Response:
+    def sync_read(self, params: SyncParams) -> Response:
         assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_READ, params)
 
-        return self._sync_read(tx, params.num_motors, [signed] * params.num_motors)
+        return self._sync_read(
+            tx, params.num_motors, [params.signed] * params.num_motors
+        )
 
     def sync_write(self, params: SyncParams) -> None:
         assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
