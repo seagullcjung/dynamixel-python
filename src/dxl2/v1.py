@@ -233,7 +233,7 @@ class BulkParams(Params):
         super().__init__([0x00])
 
         self.num_motors = 0
-        self.signs = []
+        self.signs: List[bool] = []
 
     def add_address(
         self, dxl_id: int, address: int, length: int, signed: bool = False
