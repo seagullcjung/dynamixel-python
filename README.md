@@ -2,7 +2,7 @@
 
 ![test workflow](https://github.com/seagullcjung/dynamixel-python/actions/workflows/test.yaml/badge.svg)
 
-Dynamixel-Python is a user-friendly library for communicating with Dynamixel motors. Both dynamixel protocol 1.0 and 2.0 is supported.
+Dynamixel-Python is a simple and user-friendly library for communicating with Dynamixel motors. Both dynamixel protocol 1.0 and 2.0 is supported. It is designed as a replacement for the Dynamixel SDK for python. The library is written from scratch in python to simplify packet handling and parsing.
 
 ## Installation
 
@@ -27,8 +27,7 @@ bus = MotorBus(port="/dev/ttyUSB0")
 # connect before use
 bus.connect()
 
-motors = bus.scan()
-print(motors)
+bus.scan()
 
 # disconnect after use
 bus.disconnect()
@@ -57,7 +56,7 @@ bus.disconnect()
 
 ### Broadcast Ping
 
-You can send a broadcast ping to get responses from all motors connected to your controller. Note that read timeouts can't be detected since read timeout is used to detect the end. Therefore, it is not a reliable method to search for motors.
+You can send a broadcast ping to get responses from all motors connected to your controller. Note that read timeouts can't be detected since read timeout is used to detect the end.
 
 ```python
 r = bus.broadcast_ping()
