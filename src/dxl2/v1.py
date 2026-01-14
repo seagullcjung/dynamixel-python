@@ -29,13 +29,13 @@ def calc_checksum(packet: List[int]) -> int:
     return ~(sum(packet[2:]) & 0xFF) & 0xFF
 
 
-def split_bytes(data: int, *, n_bytes: int = 2) -> List[int]:
-    array = data.to_bytes(n_bytes, byteorder="little")
+def split_bytes(data: int, *, n_bytes: int = 2, signed: bool = False) -> List[int]:
+    array = data.to_bytes(n_bytes, byteorder="little", signed=signed)
     return list(array)
 
 
-def merge_bytes(array: List[int]) -> int:
-    return int.from_bytes(array, byteorder="big")
+def merge_bytes(array: List[int], signed: bool = False) -> int:
+    return int.from_bytes(array, byteorder="big", signed=signed)
 
 
 class Params:
@@ -45,11 +45,11 @@ class Params:
 
         self.params = params
 
-    def add(self, value: int, n_bytes: int = 1) -> None:
-        self.params.extend(split_bytes(value, n_bytes=n_bytes))
+    def add(self, value: int, n_bytes: int = 1, signed: bool = False) -> None:
+        self.params.extend(split_bytes(value, n_bytes=n_bytes, signed=signed))
 
-    def parse_bytes(self) -> int:
-        return merge_bytes(self.params)
+    def parse_bytes(self, signed: bool) -> int:
+        return merge_bytes(self.params, signed)
 
     @property
     def raw(self) -> bytes:
@@ -212,17 +212,18 @@ class Connection:
 
 
 class SyncParams(Params):
-    def __init__(self, address: int, length: int) -> None:
+    def __init__(self, address: int, length: int, signed: bool = False) -> None:
         super().__init__()
         self.add(address)
         self.add(length)
 
         self.length = length
         self.num_motors = 0
+        self.signed = signed
 
     def add_value(self, dxl_id: int, value: int) -> None:
         self.add(dxl_id)
-        self.add(value, self.length)
+        self.add(value, self.length, self.signed)
 
         self.num_motors += 1
 
@@ -232,13 +233,17 @@ class BulkParams(Params):
         super().__init__([0x00])
 
         self.num_motors = 0
+        self.signs = []
 
-    def add_address(self, dxl_id: int, address: int, length: int) -> None:
+    def add_address(
+        self, dxl_id: int, address: int, length: int, signed: bool = False
+    ) -> None:
         self.add(length)
         self.add(dxl_id)
         self.add(address)
 
         self.num_motors += 1
+        self.signs.append(signed)
 
 
 class MotorBus:
@@ -270,7 +275,9 @@ class MotorBus:
 
         return Response(error=0, valid=True, data=[])
 
-    def read(self, dxl_id: int, address: int, length: int) -> Response:
+    def read(
+        self, dxl_id: int, address: int, length: int, signed: bool = False
+    ) -> Response:
         tx = InstructionPacket(dxl_id, READ, Params([address, length]))
         self.conn.write_packet(tx)
 
@@ -282,14 +289,20 @@ class MotorBus:
         if not rx.valid or rx.error:
             return Response(error=rx.error, valid=rx.valid)
 
-        data = rx.params.parse_bytes()
+        data = rx.params.parse_bytes(signed)
         return Response(error=0, valid=True, data=data)
 
     def _write(
-        self, dxl_id: int, instruction: int, address: int, length: int, value: int
+        self,
+        dxl_id: int,
+        instruction: int,
+        address: int,
+        length: int,
+        value: int,
+        signed: bool,
     ) -> Optional[Response]:
         params = Params([address])
-        params.add(value, length)
+        params.add(value, length, signed)
 
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
@@ -305,14 +318,14 @@ class MotorBus:
         return Response(error=rx.error, valid=rx.valid, data=[])
 
     def write(
-        self, dxl_id: int, address: int, length: int, value: int
+        self, dxl_id: int, address: int, length: int, value: int, signed: bool = False
     ) -> Optional[Response]:
-        return self._write(dxl_id, WRITE, address, length, value)
+        return self._write(dxl_id, WRITE, address, length, value, signed)
 
     def reg_write(
-        self, dxl_id: int, address: int, length: int, value: int
+        self, dxl_id: int, address: int, length: int, value: int, signed: bool = False
     ) -> Optional[Response]:
-        return self._write(dxl_id, REG_WRITE, address, length, value)
+        return self._write(dxl_id, REG_WRITE, address, length, value, signed)
 
     def _send(
         self, dxl_id: int, instruction: int, buffer: Optional[List[int]] = None
@@ -373,14 +386,16 @@ class MotorBus:
         self.conn.write_packet(tx)
 
         data = []
-        for rx in self.conn.stream_packets(count=params.num_motors):
+        for rx, sign in zip(
+            self.conn.stream_packets(count=params.num_motors), params.signs
+        ):
             if rx is None:
                 return Response(timeout=True)
 
             if not rx.valid or rx.error != 0:
                 return Response(error=rx.error, valid=rx.valid)
 
-            data.append(rx.params.parse_bytes())
+            data.append(rx.params.parse_bytes(sign))
 
         if len(data) == 0:
             return Response(timeout=True)
