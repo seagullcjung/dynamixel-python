@@ -428,6 +428,38 @@ class MotorBus:
     def set_baudrate(self, baudrate: int) -> None:
         self.conn.set_baudrate(baudrate)
 
+    def scan(
+        self, baudrates: Optional[List[int]] = None
+    ) -> List[Dict[int, Dict[str, int]]]:
+        if baudrates is None:
+            baudrates = [
+                9600,
+                57600,
+                115200,
+                1_000_000,
+                2_000_000,
+                3_000_000,
+                4_000_000,
+                4_500_000,
+                6_000_000,
+                10_500_000,
+            ]
+
+        motors = []
+
+        for baudrate in baudrates:
+            self.set_baudrate(baudrate)
+
+            for dxl_id in range(0, 0xFE):
+                r = self.ping(dxl_id)
+
+                if r.ok and r.data is not None:
+                    info = r.data
+                    info["baudrate"] = baudrate
+                    motors.append({dxl_id: info})
+
+        return motors
+
     def ping(self, dxl_id: int) -> Response:
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
