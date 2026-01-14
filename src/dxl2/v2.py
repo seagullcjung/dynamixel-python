@@ -32,13 +32,13 @@ BULK_WRITE = 0x93
 FAST_BULK_READ = 0x9A
 
 
-def split_bytes(data: int, *, n_bytes: int = 2) -> List[int]:
-    array = data.to_bytes(n_bytes, byteorder="little")
+def split_bytes(data: int, *, n_bytes: int = 2, signed: bool = False) -> List[int]:
+    array = data.to_bytes(n_bytes, byteorder="little", signed=signed)
     return list(array)
 
 
-def merge_bytes(array: List[int]) -> int:
-    return int.from_bytes(array, byteorder="little")
+def merge_bytes(array: List[int], signed: bool = False) -> int:
+    return int.from_bytes(array, byteorder="little", signed=signed)
 
 
 def calc_crc_16(packet: List[int]) -> int:
@@ -93,8 +93,8 @@ class Params:
 
         self.params = params
 
-    def add(self, value: int, n_bytes: int = 1) -> None:
-        self.params.extend(split_bytes(value, n_bytes=n_bytes))
+    def add(self, value: int, n_bytes: int = 1, signed: bool = False) -> None:
+        self.params.extend(split_bytes(value, n_bytes=n_bytes, signed=signed))
 
     def parse_ping(self) -> Dict[str, int]:
         return {
@@ -102,17 +102,17 @@ class Params:
             "firmware_version": self.params[2],
         }
 
-    def parse_bytes(self) -> int:
-        return merge_bytes(self.params)
+    def parse_bytes(self, signed: bool) -> int:
+        return merge_bytes(self.params, signed=signed)
 
-    def parse_nested(self, lengths: List[int]) -> List[int]:
+    def parse_nested(self, lengths: List[int], signs: List[bool]) -> List[int]:
         packet = self.params[: lengths[0] + 1]
 
         data = []
-        data.append(merge_bytes(packet[1:]))
+        data.append(merge_bytes(packet[1:], signs[0]))
 
         start = lengths[0] + 1
-        for length in lengths[1:]:
+        for length, sign in zip(lengths[1:], signs[1:]):
             packet = self.params[start : start + length + 4]
 
             error = packet[2]
@@ -122,7 +122,7 @@ class Params:
 
             start += length + 4
 
-            data.append(merge_bytes(packet[4:]))
+            data.append(merge_bytes(packet[4:], sign))
 
         return data
 
@@ -332,13 +332,14 @@ class SyncType(Enum):
 
 
 class SyncParams(Params):
-    def __init__(self, address: int, length: int) -> None:
+    def __init__(self, address: int, length: int, signed: bool = False) -> None:
         super().__init__()
         self.add(address, 2)
         self.add(length, 2)
 
         self.length = length
         self.num_motors = 0
+        self.signed = signed
 
         self.type: Optional[SyncType] = None
 
@@ -358,7 +359,7 @@ class SyncParams(Params):
             assert self.type == SyncType.WRITE, "You can't mix add_motor and add_value"
 
         self.add(dxl_id)
-        self.add(value, self.length)
+        self.add(value, self.length, self.signed)
 
         self.num_motors += 1
 
@@ -376,8 +377,11 @@ class BulkParams(Params):
         self.type: Optional[BulkType] = None
 
         self.lengths: List[int] = []
+        self.signs: List[bool] = []
 
-    def add_address(self, dxl_id: int, address: int, length: int) -> None:
+    def add_address(
+        self, dxl_id: int, address: int, length: int, signed: bool = False
+    ) -> None:
         if self.type is None:
             self.type = BulkType.READ
         else:
@@ -389,8 +393,11 @@ class BulkParams(Params):
 
         self.num_motors += 1
         self.lengths.append(length)
+        self.signs.append(signed)
 
-    def add_value(self, dxl_id: int, address: int, length: int, value: int) -> None:
+    def add_value(
+        self, dxl_id: int, address: int, length: int, value: int, signed: bool = False
+    ) -> None:
         if self.type is None:
             self.type = BulkType.WRITE
         else:
@@ -401,7 +408,7 @@ class BulkParams(Params):
         self.add(dxl_id)
         self.add(address, 2)
         self.add(length, 2)
-        self.add(value, length)
+        self.add(value, length, signed)
 
         self.num_motors += 1
 
@@ -469,7 +476,9 @@ class MotorBus:
         r.data = data
         return r
 
-    def read(self, dxl_id: int, address: int, length: int) -> Response:
+    def read(
+        self, dxl_id: int, address: int, length: int, signed: bool = False
+    ) -> Response:
         params = Params()
         params.add(address, 2)
         params.add(length, 2)
@@ -488,15 +497,21 @@ class MotorBus:
         if rx.valid:
             rx.remove_stuffing()
 
-        data = rx.params.parse_bytes()
+        data = rx.params.parse_bytes(signed)
         return Response(error=0, valid=True, data=data)
 
     def _write(
-        self, dxl_id: int, instruction: int, address: int, length: int, value: int
+        self,
+        dxl_id: int,
+        instruction: int,
+        address: int,
+        length: int,
+        value: int,
+        signed: bool,
     ) -> Response:
         params = Params()
         params.add(address, 2)
-        params.add(value, length)
+        params.add(value, length, signed)
 
         tx = InstructionPacket(dxl_id, instruction, params)
         self.conn.write_packet(tx)
@@ -508,11 +523,15 @@ class MotorBus:
 
         return Response(error=rx.error, valid=rx.valid, data=[])
 
-    def write(self, dxl_id: int, address: int, length: int, value: int) -> Response:
-        return self._write(dxl_id, WRITE, address, length, value)
+    def write(
+        self, dxl_id: int, address: int, length: int, value: int, signed: bool = False
+    ) -> Response:
+        return self._write(dxl_id, WRITE, address, length, value, signed)
 
-    def reg_write(self, dxl_id: int, address: int, length: int, value: int) -> Response:
-        return self._write(dxl_id, REG_WRITE, address, length, value)
+    def reg_write(
+        self, dxl_id: int, address: int, length: int, value: int, signed: bool = False
+    ) -> Response:
+        return self._write(dxl_id, REG_WRITE, address, length, value, signed)
 
     def _send(
         self, dxl_id: int, instruction: int, buffer: Optional[List[int]] = None
@@ -565,11 +584,13 @@ class MotorBus:
     def control_table_restore(self, dxl_id: int) -> Response:
         return self._send(dxl_id, CONTROL_TABLE_BACKUP, [0x02, 0x43, 0x54, 0x52, 0x4C])
 
-    def _sync_read(self, tx: InstructionPacket, count: int) -> Response:
+    def _sync_read(
+        self, tx: InstructionPacket, count: int, signs: List[bool]
+    ) -> Response:
         self.conn.write_packet(tx)
 
         data = []
-        for rx in self.conn.stream_packets(count=count):
+        for rx, signed in zip(self.conn.stream_packets(count=count), signs):
             if rx is None:
                 return Response(timeout=True)
 
@@ -579,19 +600,19 @@ class MotorBus:
             if rx.valid:
                 rx.remove_stuffing()
 
-            data.append(rx.params.parse_bytes())
+            data.append(rx.params.parse_bytes(signed))
 
         if len(data) == 0:
             return Response(timeout=True)
 
         return Response(error=0, valid=True, data=data)
 
-    def sync_read(self, params: SyncParams) -> Response:
+    def sync_read(self, params: SyncParams, signed: bool = False) -> Response:
         assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, SYNC_READ, params)
 
-        return self._sync_read(tx, params.num_motors)
+        return self._sync_read(tx, params.num_motors, [signed] * params.num_motors)
 
     def sync_write(self, params: SyncParams) -> None:
         assert params.num_motors > 0, "You need to add values with SyncParams.add_value"
@@ -599,7 +620,7 @@ class MotorBus:
         tx = InstructionPacket(BROADCAST_ID, SYNC_WRITE, params)
         self.conn.write_packet(tx)
 
-    def fast_sync_read(self, params: SyncParams) -> Response:
+    def fast_sync_read(self, params: SyncParams, signed: bool = False) -> Response:
         assert params.num_motors > 0, "You need to add motors with SyncParams.add_motor"
 
         tx = InstructionPacket(BROADCAST_ID, FAST_SYNC_READ, params)
@@ -616,7 +637,9 @@ class MotorBus:
         if rx.valid:
             rx.remove_stuffing()
 
-        data = rx.params.parse_nested([params.length] * params.num_motors)
+        data = rx.params.parse_nested(
+            [params.length] * params.num_motors, [signed] * params.num_motors
+        )
         return Response(error=0, valid=True, data=data)
 
     def bulk_read(self, params: BulkParams) -> Response:
@@ -625,7 +648,7 @@ class MotorBus:
         )
 
         tx = InstructionPacket(BROADCAST_ID, BULK_READ, params)
-        return self._sync_read(tx, params.num_motors)
+        return self._sync_read(tx, params.num_motors, params.signs)
 
     def bulk_write(self, params: BulkParams) -> None:
         assert params.num_motors > 0 and params.type == BulkType.WRITE, (
@@ -654,5 +677,5 @@ class MotorBus:
         if rx.valid:
             rx.remove_stuffing()
 
-        data = rx.params.parse_nested(params.lengths)
+        data = rx.params.parse_nested(params.lengths, params.signs)
         return Response(error=0, valid=True, data=data)
