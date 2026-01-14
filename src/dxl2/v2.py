@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Dict, Generator, List, Optional, Tuple
 
 from serial import Serial
+from tqdm.auto import tqdm
 
 from .response import Response
 
@@ -428,38 +429,6 @@ class MotorBus:
     def set_baudrate(self, baudrate: int) -> None:
         self.conn.set_baudrate(baudrate)
 
-    def scan(
-        self, baudrates: Optional[List[int]] = None
-    ) -> List[Dict[int, Dict[str, int]]]:
-        if baudrates is None:
-            baudrates = [
-                9600,
-                57600,
-                115200,
-                1_000_000,
-                2_000_000,
-                3_000_000,
-                4_000_000,
-                4_500_000,
-                6_000_000,
-                10_500_000,
-            ]
-
-        motors = []
-
-        for baudrate in baudrates:
-            self.set_baudrate(baudrate)
-
-            for dxl_id in range(0, 0xFE):
-                r = self.ping(dxl_id)
-
-                if r.ok and r.data is not None:
-                    info = r.data
-                    info["baudrate"] = baudrate
-                    motors.append({dxl_id: info})
-
-        return motors
-
     def ping(self, dxl_id: int) -> Response:
         tx = InstructionPacket(dxl_id, PING)
         self.conn.write_packet(tx)
@@ -507,6 +476,34 @@ class MotorBus:
 
         r.data = data
         return r
+
+    def scan(self, baudrates: Optional[List[int]] = None) -> Dict[int, Dict[str, int]]:
+        if baudrates is None:
+            baudrates = [
+                9600,
+                57600,
+                115200,
+                1_000_000,
+                2_000_000,
+                3_000_000,
+                4_000_000,
+                4_500_000,
+                6_000_000,
+                10_500_000,
+            ]
+
+        all_infos = {}
+        for baudrate in tqdm(baudrates, desc="Scanning...", dynamic_ncols=True):
+            self.set_baudrate(baudrate)
+
+            r = self.broadcast_ping()
+
+            if r.ok and r.data is not None:
+                infos = r.data
+                tqdm.write(f"Found {infos} on baudrate {baudrate}.")
+                all_infos[baudrate] = infos
+
+        return all_infos
 
     def read(
         self, dxl_id: int, address: int, length: int, signed: bool = False

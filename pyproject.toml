@@ -18,7 +18,8 @@ classifiers = [
 ]
 license = { text = "MIT" }
 dependencies = [
-    "pyserial"
+    "pyserial",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
