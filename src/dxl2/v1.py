@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Generator, List, Optional, Tuple
 
 from serial import Serial
+from tqdm.auto import tqdm, trange
 
 from .response import Response
 
@@ -261,9 +262,7 @@ class MotorBus:
     def set_baudrate(self, baudrate: int) -> None:
         self.conn.set_baudrate(baudrate)
 
-    def scan(
-        self, baudrates: Optional[List[int]] = None
-    ) -> List[Dict[int, Dict[str, int]]]:
+    def scan(self, baudrates: Optional[List[int]] = None) -> Dict[int, List[int]]:
         if baudrates is None:
             baudrates = [
                 9600,
@@ -278,18 +277,24 @@ class MotorBus:
                 10_500_000,
             ]
 
-        motors = []
-
-        for baudrate in baudrates:
+        all_motors = {}
+        for baudrate in tqdm(baudrates, desc="Scanning...", dynamic_ncols=True):
             self.set_baudrate(baudrate)
 
-            for dxl_id in range(0, 0xFE):
+            motors = []
+            for dxl_id in trange(
+                0, 0xFE, desc=f"baudrate {baudrate}", leave=False, dynamic_ncols=True
+            ):
                 r = self.ping(dxl_id)
 
                 if r.ok:
-                    motors.append({dxl_id: {"baudrate": baudrate}})
+                    motors.append(dxl_id)
 
-        return motors
+            if len(motors):
+                tqdm.write(f"Found {motors} on baudrate {baudrate}.")
+                all_motors[baudrate] = motors
+
+        return all_motors
 
     def ping(self, dxl_id: int) -> Response:
         tx = InstructionPacket(dxl_id, PING)
