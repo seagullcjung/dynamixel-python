@@ -6,7 +6,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Generator, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 from serial import Serial
 
@@ -260,6 +260,36 @@ class MotorBus:
 
     def set_baudrate(self, baudrate: int) -> None:
         self.conn.set_baudrate(baudrate)
+
+    def scan(
+        self, baudrates: Optional[List[int]] = None
+    ) -> List[Dict[int, Dict[str, int]]]:
+        if baudrates is None:
+            baudrates = [
+                9600,
+                57600,
+                115200,
+                1_000_000,
+                2_000_000,
+                3_000_000,
+                4_000_000,
+                4_500_000,
+                6_000_000,
+                10_500_000,
+            ]
+
+        motors = []
+
+        for baudrate in baudrates:
+            self.set_baudrate(baudrate)
+
+            for dxl_id in range(0, 0xFE):
+                r = self.ping(dxl_id)
+
+                if r.ok:
+                    motors.append({dxl_id: {"baudrate": baudrate}})
+
+        return motors
 
     def ping(self, dxl_id: int) -> Response:
         tx = InstructionPacket(dxl_id, PING)
