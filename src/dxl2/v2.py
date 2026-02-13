@@ -14,8 +14,6 @@ from tqdm.auto import tqdm
 
 from .response import Response
 
-HEADER = [0xFF, 0xFF, 0xFD, 0x00]
-
 BROADCAST_ID = 0xFE
 
 PING = 0x01
@@ -153,7 +151,7 @@ class InstructionPacket:
     params: Params = field(default_factory=Params)
 
     header: List[int] = field(
-        default_factory=lambda: HEADER,
+        default_factory=lambda: [0xFF, 0xFF, 0xFD, 0x00],
         init=False,
     )
     length: int = field(init=False)
@@ -279,76 +277,7 @@ class Connection:
         return packet
 
     def read_packet(self) -> Optional[StatusPacket]:
-        packet = []
-
-        packet_length = 11
-
-        t0 = time.time()
-
-        while True:
-            if (
-                self.serial.timeout is not None
-                and time.time() - t0 <= self.serial.timeout
-            ):
-                pass
-
-            packet.extend(self.serial.read(packet_length - len(packet)))
-
-            starts = []
-            for i in range(len(packet)):
-                if packet[i : i + 4] == HEADER:
-                    starts.append(i)
-
-            if len(starts) == 0:
-                if len(packet) >= len(HEADER) * 2:
-                    del packet[: len(HEADER)]
-            else:
-                last_start = starts[-1]
-
-                if last_start > 0:
-                    del packet[:last_start]
-
-                if len(packet) >= 7:
-                    low = packet[5]
-                    hi = packet[6]
-
-                    length = (hi << 8) | low
-
-                    packet_length = max(packet_length, 7 + length)
-
-                    if len(packet) == 7 + length:
-                        low = packet[-2]
-                        hi = packet[-1]
-
-                        crc = (hi << 8) | low
-
-                        if calc_crc_16(packet[:-2]) != crc:
-                            raise Error
-
-                        dxl_id = packet[4]
-
-                        instruction = packet[7]
-
-                        error = packet[8]
-
-                        params = packet[9:-2]
-
-                        indices = []
-
-                        if stuffed and len(params) >= 4:
-                            for j in range(len(params)):
-                                if params[i : i + 4] == [0xFF, 0xFF, 0xFD, 0xFD]:
-                                    indices.append(j + 3)
-
-                        if len(indices) > 0:
-                            for j in reversed(indices):
-                                if j < len(packet) - 2 - 9:
-                                    del params[j]
-
-                        if instruction != 0x55:
-                            raise Error
-
-                        return StatusPacket
+        packet = self.read_header()
 
         if len(packet) < 4:
             return None
