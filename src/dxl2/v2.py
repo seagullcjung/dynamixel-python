@@ -359,8 +359,8 @@ class SyncParams(Params):
         else:
             assert self.type == SyncType.WRITE, "You can't mix add_motor and add_value"
 
-        self.add(value, self.length, self.signed)
         self.add(dxl_id)
+        self.add(value, self.length, self.signed)
 
         self.num_motors += 1
 
