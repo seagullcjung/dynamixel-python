@@ -439,11 +439,11 @@ def test_v2_sync_write(mock_serial, bus):
     params = [0x74, 0x01]
     params.extend([0x04, 0x00])
 
-    params.append(0x01)
     params.extend(split_bytes(0x01010196, n_bytes=4))
+    params.append(0x01)
 
-    params.append(0x02)
     params.extend(split_bytes(0x01210136, n_bytes=4))
+    params.append(0x02)
 
     tx = build_tx(BROADCAST_ID, SYNC_WRITE, params)
 
